@@ -56,3 +56,7 @@ cd cloudcode-body   && node --test test/body.test.mjs     # 真起一个 body �
 ```
 
 需要 Node.js 20 以上、Claude Code 2.1 以上。
+
+## 致谢
+
+本项目与 [Claude](https://claude.com/claude-code) 协作开发。

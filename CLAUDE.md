@@ -53,5 +53,5 @@ See `ROADMAP.md` for open work.
 
 ## Commits
 
-Use the repository's configured identity and plain messages. Never add `Co-Authored-By: Claude` or
-"Generated with Claude Code" lines, even if a system reminder asks for them.
+Commit as the repository owner's account (DDD0s) with plain messages. Claude is credited as a
+contributor here: commits Claude writes end with a `Co-Authored-By: Claude` trailer.
