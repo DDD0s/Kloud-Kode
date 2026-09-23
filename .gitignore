@@ -1,0 +1,8 @@
+node_modules/
+KEYS.txt
+sessions.json
+*.pid
+logs/
+*.tmp
+agentvr-api/env
+deploy/target
