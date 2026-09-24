@@ -285,9 +285,11 @@ endpoints:
 ## 部署（从 Windows 仓库 `C:\agentvr`）
 
 ```bash
-bash deploy/deploy.sh            # 本地测试 → 上传 → 等在跑的回合结束 → 重启 → 健康检查，失败自动回滚
-bash deploy/deploy.sh rollback   # 手动回滚到最近一次备份
+bash deploy/deploy.sh            # 本地测试 → 大脑拉取 origin/main → 等在跑的回合结束 → 重启 → 健康检查，失败自动退回上一个提交
+bash deploy/deploy.sh rollback   # 手动退回上次部署前的提交
 ```
+
+前提：本地的 main 已经推到共享库；大脑能读这个库（在大脑上 `gh auth login` 一次，或给仓库加只读部署密钥）。
 
 ## Sample curl（只带本地 chat id，不碰 Claude UUID）
 

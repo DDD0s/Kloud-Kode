@@ -45,7 +45,7 @@
 | `cloudcode-body/` | 跑在你电脑上的 MCP 服务，Claude 靠它操作这台机器 |
 | `agentvr/` | 到身体主机的 SSH 隧道脚本 |
 | `agentvr-session/` | Claude Code 的工作目录模板（`.mcp.json` 里的 token 已隐去） |
-| `deploy/` | 一键部署脚本，带备份和自动回滚 |
+| `deploy/` | 一键部署：大脑从共享库拉取 main 并重启，起不来就自动退回上一个提交 |
 | `ROADMAP.md` | 已完成和计划中的功能 |
 
 ## 开发

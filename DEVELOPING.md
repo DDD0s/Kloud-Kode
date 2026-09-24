@@ -40,7 +40,7 @@ with `deploy/deploy.sh`. `SETUP.md` is the from-scratch guide; this file is the 
 ```bash
 cd agentvr-api && node --test test/server.test.mjs      # fake claude + fake body, ~25 s
 cd cloudcode-body && node --test test/body.test.mjs      # real body process over HTTP
-bash deploy/deploy.sh                                     # tests, upload, restart, auto-rollback
+bash deploy/deploy.sh                                     # tests, brain pulls origin/main, restart, auto-rollback
 bash deploy/deploy.sh rollback
 ```
 

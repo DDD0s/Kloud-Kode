@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Deploy to the brain host from this repo.
+# Deploy the shared repository's main branch to the brain host.
 #
-#   bash deploy/deploy.sh            # test, upload, restart, verify, auto-rollback on failure
-#   bash deploy/deploy.sh rollback   # restore the most recent backup
+#   bash deploy/deploy.sh            # test locally, then the brain pulls origin/main, restarts, verifies
+#   bash deploy/deploy.sh rollback   # the brain goes back to the commit it ran before the last deploy
+#
+# The brain host pulls from GitHub itself (it needs read access to the repo),
+# so what runs there is always a real commit, and a rollback is a git reset.
 #
 # Runs from Windows Git Bash or Linux. Needs ssh to the brain to work.
 # Set AGENTVR_DEPLOY_HOST / AGENTVR_REMOTE_DIR, or put them in deploy/target.
@@ -16,25 +19,30 @@ if [[ -f "$(dirname "$0")/target" ]]; then
   set +a
 fi
 HOST="${AGENTVR_DEPLOY_HOST:?set AGENTVR_DEPLOY_HOST, or create deploy/target}"
-REMOTE_DIR="${AGENTVR_REMOTE_DIR:-$HOME/agentvr-api}"
-REMOTE_TUNNEL_DIR="$(dirname "$REMOTE_DIR")/agentvr"
+REMOTE_DIR="${AGENTVR_REMOTE_DIR:?set AGENTVR_REMOTE_DIR to the agentvr-api directory of the checkout on the brain}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10)
-SCP=(scp -q -o BatchMode=yes)
 
 if [[ "${1:-}" == "rollback" ]]; then
   "${SSH[@]}" "$HOST" "bash -s" -- "$REMOTE_DIR" < "$ROOT/deploy/remote-rollback.sh"
   exit $?
 fi
 
+# The brain deploys origin/main, so what you tested here has to be what is there.
+cd "$ROOT"
+git fetch -q origin
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "local changes are not committed; commit and push them first" >&2
+  exit 1
+fi
+if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+  echo "local HEAD $(git rev-parse --short HEAD) is not origin/main $(git rev-parse --short origin/main); push or pull first" >&2
+  exit 1
+fi
+echo "== deploying $(git log --oneline -1)"
+
 echo "== local tests"
 (cd "$ROOT/agentvr-api" && node --test test/server.test.mjs)
 
-echo "== upload to $HOST (staged as *.new)"
-for f in server.mjs package.json README.md start.sh stop.sh; do
-  "${SCP[@]}" "$ROOT/agentvr-api/$f" "$HOST:$REMOTE_DIR/$f.new"
-done
-"${SCP[@]}" "$ROOT/agentvr/tunnel-up.sh" "$HOST:$REMOTE_TUNNEL_DIR/tunnel-up.sh.new"
-
-echo "== swap, restart, verify"
+echo "== pull, restart, verify on $HOST"
 "${SSH[@]}" "$HOST" "bash -s" -- "$REMOTE_DIR" < "$ROOT/deploy/remote-swap.sh"

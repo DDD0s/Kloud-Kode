@@ -1,25 +1,30 @@
 #!/usr/bin/env bash
-# Runs ON the brain host via deploy.sh. Arg 1: agentvr-api directory.
-# Expects every file in FILES to have been uploaded as "<file>.new".
+# Runs ON the brain host via deploy.sh. Arg 1: the agentvr-api directory inside the checkout.
+# Pulls origin/main, restarts the API, and goes back to the previous commit if it does not come up.
 set -euo pipefail
 DIR="$1"
 cd "$DIR"
+REPO="$(git rev-parse --show-toplevel)"
 # The brain may keep node outside PATH for non-interactive shells.
 if [[ -f ./env ]]; then set -a; source ./env; set +a; fi
 NODE="${NODE_BIN:-$(command -v node || true)}"
 [[ -n "$NODE" ]] || { echo "node not found; set NODE_BIN in agentvr-api/env" >&2; exit 1; }
 PORT="${AGENTVR_API_PORT:-18888}"
 KEY=$(awk -F': ' '/^api-key:/{print $2; exit}' KEYS.txt)
-ts=$(date +%Y%m%d-%H%M%S)
-FILES="server.mjs package.json README.md start.sh stop.sh ../agentvr/tunnel-up.sh"
+# The session's .mcp.json carries this host's real body token; the repo only has a placeholder.
+MCP="$REPO/agentvr-session/.mcp.json"
 
-for f in $FILES; do
-  sed -i 's/\r$//' "$f.new"
-done
-chk=$(mktemp --suffix=.mjs); cp server.mjs.new "$chk"; "$NODE" --check "$chk"; rm -f "$chk"
-bash -n start.sh.new
-bash -n stop.sh.new
-bash -n ../agentvr/tunnel-up.sh.new
+prev=$(git -C "$REPO" rev-parse HEAD)
+git -C "$REPO" fetch -q origin
+next=$(git -C "$REPO" rev-parse origin/main)
+echo "running $(git -C "$REPO" log --oneline -1 "$prev")"
+echo "target  $(git -C "$REPO" log --oneline -1 "$next")"
+
+# Check the new code before touching anything.
+chk=$(mktemp --suffix=.mjs)
+git -C "$REPO" show "$next:agentvr-api/server.mjs" > "$chk"
+"$NODE" --check "$chk"
+rm -f "$chk"
 
 # Do not cut off a turn that is running right now (wait up to 5 minutes).
 for _ in $(seq 1 60); do
@@ -31,28 +36,39 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 
-for f in $FILES; do
-  if [[ -f "$f" ]]; then cp -p "$f" "$f.bak-$ts"; fi
-  mv "$f.new" "$f"
-done
-chmod 755 start.sh stop.sh ../agentvr/tunnel-up.sh
-echo "backup suffix: .bak-$ts"
+checkout() {
+  local rev="$1" keep
+  keep=$(mktemp)
+  cp -p "$MCP" "$keep"
+  git -C "$REPO" update-index --no-skip-worktree agentvr-session/.mcp.json
+  git -C "$REPO" reset -q --hard "$rev"
+  cp -p "$keep" "$MCP"
+  rm -f "$keep"
+  git -C "$REPO" update-index --skip-worktree agentvr-session/.mcp.json
+}
 
-./stop.sh || true
-./start.sh </dev/null
-sleep 1.5
+restart() {
+  ./stop.sh || true
+  ./start.sh </dev/null
+  sleep 1.5
+}
 
-if curl -sf --max-time 5 -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/healthz" | grep -q '"builtin_tools"'; then
+healthy() {
+  curl -sf --max-time 5 -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/healthz" | grep -q '"builtin_tools"'
+}
+
+echo "$prev" > "$REPO/.deploy-prev"
+checkout "$next"
+restart
+
+if healthy; then
   echo "deploy OK"
   curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/healthz"
   echo
 else
-  echo "deploy FAILED health check, rolling back" >&2
+  echo "deploy FAILED health check, going back to $(git -C "$REPO" log --oneline -1 "$prev")" >&2
   tail -n 30 logs/agentvr-api.log >&2 || true
-  for f in $FILES; do
-    if [[ -f "$f.bak-$ts" ]]; then cp -p "$f.bak-$ts" "$f"; fi
-  done
-  ./stop.sh || true
-  ./start.sh </dev/null
+  checkout "$prev"
+  restart
   exit 1
 fi
