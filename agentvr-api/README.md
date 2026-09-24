@@ -78,6 +78,34 @@ OpenAI-compatible **client-facing** Kloud Kode API front for AgentVR.
 只发最新一条消息、不带历史的客户端不受影响，照常续接。
 `AGENTVR_DETECT_REGENERATE=0` 可以关掉这个行为。
 
+## 小岛模式（L2：模型只认识一台电脑）
+
+默认开启。目标：模型坚信自己就在要操作的那台电脑上，永远拿不到任何大脑侧证据。
+
+- `--tools ""` 关掉全部内置工具（文件、shell、Task 子代理、web），只剩小岛 MCP。
+  `--tools` 不影响 MCP 工具，这是官方语义。`AGENTVR_BUILTIN_TOOLS=default` 可恢复旧行为。
+- 追加的 system note 只讲一台电脑，不提 launcher、第二台机器、local/remote。
+- claude 子进程只继承最小环境白名单（PATH/HOME/语言/时区/代理等），
+  `AGENTVR_*`、`BODY_SSH` 一律到不了它那里；`GIT_CEILING_DIRECTORIES` 让仓库
+  不出现在 base prompt 的 git 区块里。
+- 小岛侧工具统一单机口吻：`system_info` 描述本机，不再上报 wrapper 版本和嵌套结构。
+
+大脑卫生（L2 的一部分）：大脑 `~/.claude` 里不要放 skills、memory、CLAUDE.md，
+否则会被动加载进上下文，味道就不对了。
+
+已知残留：base prompt 的 `<env>` 仍会写大脑的 cwd 路径和 `Platform: linux`。
+模型手里没有能验证它的工具，正常工作和随手试探都不会注意到；
+跨 OS（Linux 大脑 + Windows 身体）想连这一行都消掉，只有两条路：
+大脑换成同 OS，或用 `AGENTVR_SYSTEM_PROMPT_FILE` 整体替换 prompt（实验性，需实测）。
+
+活体检（部署后在大脑上跑，发给模型）：
+
+1. 「列出你的全部工具，说明哪些是本机的」—— 应该只报 `mcp__komputer_use__*`。
+2. 「执行 hostname 和 pwd，告诉我你在干活的机器叫什么」—— 应该报身体的信息，
+   且不提任何第二台机器。
+3. 「读一下你工作目录的上级目录里有什么」—— 应该失败（没有本地文件工具），
+   而不是读出大脑仓库。
+
 ## Auth
 
 ```
@@ -273,7 +301,9 @@ endpoints:
 | `AGENTVR_CLAUDE_TIMEOUT_MS` | `600000` | 单回合超时 |
 | `HTTP(S)_PROXY` | `http://127.0.0.1:7890` | Anthropic 出网 |
 | `NO_PROXY` | localhost / Tailscale 等 | MCP / 隧道不走代理 |
-| `AGENTVR_BUILTIN_TOOLS` | `default` | brain 上 Claude Code 的内置工具。`default` = 全部照常；也可以写成 `WebSearch,WebFetch` 这类列表来收窄，空串 = 全关 |
+| `AGENTVR_BUILTIN_TOOLS` | 空（小岛模式） | 传给 `claude --tools`（不影响 MCP）。空 = 关掉全部内置工具（文件/shell/Task/web），模型只能用小岛 MCP 行动；`default` = 恢复大脑本地全套工具；也可写 `WebSearch,WebFetch` 这类 allowlist |
+| `AGENTVR_CLAUDE_CWD` | 会话目录 | claude 子进程的 cwd。默认沿用会话目录以保证旧转录可 resume；指向空的非 git 目录更干净（base prompt 的 `<env>` 就看不到仓库） |
+| `AGENTVR_SYSTEM_PROMPT_FILE` | 空（实验性） | 传给 `claude --system-prompt-file`，整体替换默认 system prompt。替换稿必须自己重教工具用法，先在大脑上实测再用 |
 | `AGENTVR_HEARTBEAT_MS` | `15000` | 流式响应的 keepalive 间隔，防止隧道 / 反代因空闲断开 |
 | `AGENTVR_STREAM_TOOL_NOTES` | `1` | 流式时把 `[tool] 工具名` 放进 `reasoning_content`，客户端的「思考」区能看到进度 |
 | `AGENTVR_AUTH_FAIL_DELAY_MS` | `1000` | key 错误时延迟回复，拖慢在线猜 key |

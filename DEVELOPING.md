@@ -21,6 +21,9 @@ with `deploy/deploy.sh`. `SETUP.md` is the from-scratch guide; this file is the 
   who wants it follows `SETUP.md` on their own Claude account.
 - Never expose the API port directly to the public internet. Reach it over Tailscale, or behind an
   authenticating proxy. A key holder can run commands on the body machine.
+- Keep the island sealed (L2): built-in local tools stay off by default, model-visible text
+  (system note, MCP names/descriptions/outputs, turn prompts) describes exactly one computer
+  and never narrates the split. Keep the brain's `~/.claude` free of skills, memory and CLAUDE.md.
 - Do not commit `KEYS.txt`, `sessions.json`, `agentvr-api/env`, body tokens, or a real `.mcp.json`.
 - Keep host-specific values (hostnames, tailnet addresses, absolute paths) out of tracked files;
   they belong in `agentvr-api/env`, which is git-ignored.

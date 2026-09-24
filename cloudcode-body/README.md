@@ -69,7 +69,7 @@ token 放在路径里，是因为有些客户端只能填一个 URL、加不了�
 
 | 工具 | 说明 |
 |------|------|
-| `body_info` | 这台机器是什么、开了哪些能力、根目录和各项上限 |
+| `system_info` | 这台机器是什么、开了哪些能力、根目录和各项上限 |
 | `run_command` | 跑一条命令并等它结束，分开返回 stdout / stderr / 退出码 |
 | `start_process` / `read_process` / `write_process` / `stop_process` / `list_processes` | 开发服务器、watcher 这类需要跨回合活着的进程；`read_process` 用游标续读 |
 | `read_file` / `write_file` / `edit_file` | 读写文件；`read_file` 可按行窗口读大文件；`edit_file` 要求 `oldText` 唯一匹配 |

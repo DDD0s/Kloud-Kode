@@ -203,6 +203,6 @@ AGENTVR_HEALTH_URL=http://127.0.0.1:8787/healthz
 | `503 body tunnel unavailable` | 身体那台没开机，或者隧道断了。检查 `ssh body echo ok` |
 | `429` | Claude 订阅额度用完了，响应头 `Retry-After` 会说多久后再试 |
 | 客户端超时但服务端日志正常 | 多半是客户端那边的代理，见第五步的坑 |
-| 中文 / 日文输出乱码 | 身体那边会自动按控制台代码页解码。还乱就把 `body_info` 的 `consoleEncoding` 发出来 |
+| 中文 / 日文输出乱码 | 身体那边会自动按控制台代码页解码。还乱就把 `system_info` 的 `consoleEncoding` 发出来 |
 
 日志在 `agentvr-api/logs/agentvr-api.log`。

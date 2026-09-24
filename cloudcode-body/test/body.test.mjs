@@ -110,7 +110,7 @@ test("an MCP SDK client connects with a bearer header", async () => {
   try {
     await client.connect(transport);
     const result = await client.listTools();
-    assert.ok(result.tools.some((tool) => tool.name === "body_info"));
+    assert.ok(result.tools.some((tool) => tool.name === "system_info"));
   } finally {
     await client.close();
   }
@@ -126,8 +126,9 @@ test("healthz needs no token and says nothing sensitive", async () => {
 test("the tool list covers shell, files, processes and nested MCP", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
+  assert.ok(!names.includes("body_info"), "the old body_info name must be gone");
   for (const n of [
-    "body_info",
+    "system_info",
     "run_command",
     "start_process",
     "read_process",
@@ -150,6 +151,17 @@ test("the tool list covers shell, files, processes and nested MCP", async () => 
   }
   for (const t of body.result.tools) {
     assert.ok(t.description && t.description.length > 15, `${t.name} needs a real description`);
+  }
+});
+
+test("tool names and descriptions never narrate a second machine", async () => {
+  const { body } = await rpc("tools/list");
+  for (const t of body.result.tools) {
+    assert.doesNotMatch(
+      `${t.name} ${t.description}`,
+      /body_info|body server|through this one|nested|launcher|tunnel/i,
+      `${t.name} breaks island voice`
+    );
   }
 });
 
@@ -177,7 +189,7 @@ test("command output that is not UTF-8 is decoded with the console codepage", as
   const script = path.join(tmp, "emit.mjs");
   fs.writeFileSync(script, `process.stdout.write(Buffer.from([0x93,0xfa,0x96,0x7b,0x8c,0xea]));`);
   const r = await call("run_command", { command: `"${process.execPath}" "${script}"` });
-  const info = await call("body_info");
+  const info = await call("system_info");
   if (info.consoleEncoding === "shift_jis") {
     assert.equal(r.stdout, "日本語");
     assert.equal(r.encoding, "shift_jis");
@@ -317,14 +329,15 @@ test("a started process keeps running between calls and streams with cursors", a
   assert.equal((await call("read_process", { processId: started.processId })).running, false);
 });
 
-test("body_info describes the machine and its limits", async () => {
-  const info = await call("body_info");
+test("system_info describes the machine and its limits, nothing about the wrapper", async () => {
+  const info = await call("system_info");
   assert.equal(info.host, os.hostname());
   assert.equal(info.platform, process.platform);
   assert.equal(info.defaultRoot, "main");
   assert.equal(info.roots[0].path, root);
   assert.deepEqual(info.enabled, { files: true, shell: true, processes: true });
   assert.ok(info.consoleEncoding);
+  assert.ok(!("version" in info) && !("mcpServers" in info), "no wrapper fingerprints");
 });
 
 test("nested MCP reports nothing configured and fails clearly", async () => {
@@ -359,7 +372,7 @@ test("run_command can target a specific shell, and prompting built-ins fail fast
     const sh = await call("run_command", { command: 'x="a b"; echo "[$x]"', shell: "sh" });
     assert.equal(sh.stdout.trim(), "[a b]");
   }
-  const info = await call("body_info");
+  const info = await call("system_info");
   assert.ok(info.defaultShell);
   assert.ok(info.shells.includes("powershell"));
 });

@@ -4,6 +4,16 @@ Goal: a complete personal AI endpoint usable from any device (office PC, laptop 
 phone), backed by the owner's own official Claude Code. Prefer full functionality over
 restrictions; keep it single-user and keep credentials inside the real `claude` binary.
 
+## Done in 0.7.0 (2026-09-24)
+
+- Island mode (L2) by default: `--tools ""` removes all brain-local tools, so the model
+  only ever acts through the island MCP; `default` restores the legacy full set.
+- Single-computer voice everywhere the model can see: new system note, `body_info`
+  renamed to `system_info` with wrapper fields dropped, nested-MCP wording flattened.
+- Claude child gets a minimal env allowlist plus `GIT_CEILING_DIRECTORIES`; optional
+  `AGENTVR_CLAUDE_CWD` and experimental `AGENTVR_SYSTEM_PROMPT_FILE`.
+- Fixed `agentvr-session/.claude/settings.local.json` enabling a stale server name.
+
 ## Done in 0.5.0 (2026-09-23)
 
 - Brain built-in tools back to Claude Code's full default set (`AGENTVR_BUILTIN_TOOLS=default`).

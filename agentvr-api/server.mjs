@@ -44,6 +44,13 @@ const LISTEN = (env.AGENTVR_API_HOST || "127.0.0.1")
 const REPO_ROOT = path.dirname(__dirname);
 const SESSION_DIR = env.AGENTVR_SESSION_DIR || path.join(REPO_ROOT, "agentvr-session");
 const MCP_CONFIG = env.AGENTVR_MCP_CONFIG || path.join(SESSION_DIR, ".mcp.json");
+/**
+ * What claude sees as its working directory. It defaults to SESSION_DIR so
+ * existing transcripts keep resuming; point it at an empty non-git directory
+ * for a stricter island. The model has no local tools either way, so this is
+ * only what the base prompt's <env> block reports.
+ */
+const CLAUDE_CWD = env.AGENTVR_CLAUDE_CWD || SESSION_DIR;
 /** Resolved on PATH unless pointed somewhere specific. */
 const CLAUDE_BIN = env.CLAUDE_BIN || "claude";
 const TUNNEL_UP = env.AGENTVR_TUNNEL_UP || path.join(REPO_ROOT, "agentvr", "tunnel-up.sh");
@@ -69,9 +76,18 @@ const IDLE_TIMEOUT_MS = Number(env.AGENTVR_IDLE_TIMEOUT_MS || 45 * 60 * 1000);
 const SESSIONS_FILE = env.AGENTVR_SESSIONS_FILE || path.join(__dirname, "sessions.json");
 /**
  * Built-in Claude Code tools on the brain host, passed to --tools.
- * "default" (the default) leaves Claude Code's normal tool set untouched.
+ * "" (the default) removes every built-in tool — files, shell, Task, web —
+ * so the model can only act through the island's MCP tools. --tools does not
+ * affect MCP tools. "default" restores Claude Code's normal local tool set.
  */
-const BUILTIN_TOOLS = env.AGENTVR_BUILTIN_TOOLS ?? "default";
+const BUILTIN_TOOLS = env.AGENTVR_BUILTIN_TOOLS ?? "";
+/**
+ * Experimental: full system-prompt replacement file, passed to
+ * --system-prompt-file. The default prompt (with its <env> block) stays unless
+ * this is set. A replacement must re-teach tool use; evaluate on the brain
+ * before trusting it.
+ */
+const SYSTEM_PROMPT_FILE = env.AGENTVR_SYSTEM_PROMPT_FILE || "";
 /** SSE keepalive comment interval; keeps tunnels / reverse proxies from idling out. */
 const HEARTBEAT_MS = Number(env.AGENTVR_HEARTBEAT_MS || 15_000);
 /** Delay before answering a failed auth attempt (slows online guessing). */
@@ -111,14 +127,13 @@ const BODY_NAME = env.AGENTVR_BODY_NAME || "the user's computer";
 const BODY_MCP = env.AGENTVR_BODY_MCP || "komputer_use";
 
 /**
- * Short working note appended to Claude Code's own system prompt. It only says
- * where the user's files and shell are, because that is not the machine Claude
- * Code runs on. It says nothing about how requests reach Claude: that plumbing
- * is irrelevant to the work, and narrating it just clutters the answers.
+ * Short working note appended to Claude Code's own system prompt. Island voice:
+ * it describes exactly one computer and never hints at anything outside it —
+ * no launcher, no second machine, no "local vs remote".
  *
  * AGENTVR_SYSTEM_PROMPT replaces it; set it to an empty string for no note at all.
  */
-const DEFAULT_WORK_NOTE = `The user's files, shell, processes and applications are on ${BODY_NAME}, reached through the mcp__${BODY_MCP}__* tools. The machine you run on does not hold the user's work, so use those tools rather than local Read, Write, Edit, Bash, Glob or Grep for it. Prefer mcp__${BODY_MCP}__run_command for shell commands.`;
+const DEFAULT_WORK_NOTE = `You work on ${BODY_NAME}. Your shell, files, processes and applications are all there, and the mcp__${BODY_MCP}__* tools are how you reach them: run_command for shell commands, the file tools for reading and writing, start_process for anything long-running. Call system_info first if you need the OS, shell, working roots or limits.`;
 const BODY_SYSTEM = env.AGENTVR_SYSTEM_PROMPT ?? DEFAULT_WORK_NOTE;
 
 const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
@@ -576,7 +591,7 @@ function buildTurnPrompt(messages, withHistory) {
   if (!withHistory) return user;
   const prior = priorTranscript(messages);
   if (!prior) return user;
-  return `Earlier conversation, carried over from the client for context:\n\n${prior}\n\n---\n\n${user}`;
+  return `Earlier conversation for context:\n\n${prior}\n\n---\n\n${user}`;
 }
 
 /** Whitespace-insensitive fingerprint of the end of a reply. */
@@ -830,10 +845,38 @@ async function planRequest(req, body, messages) {
 // ---------------------------------------------------------------- claude runner
 
 function claudeEnv() {
-  // Claude Code inherits this process environment as-is. A proxy is only set
-  // when one is actually configured: inventing a default would send every
-  // request into a port nothing is listening on.
-  const out = { ...env, CI: "1" };
+  // The child gets a minimal allowlist, never this process's full environment:
+  // wrapper settings (AGENTVR_*, BODY_SSH, key paths, extra secrets) must not
+  // be visible from inside the island. HOME stays so Claude Code can read its
+  // own login; PATH stays so it can start. A proxy is only set when one is
+  // actually configured: inventing a default would send every request into a
+  // port nothing is listening on.
+  const keepExact = new Set([
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "TZ",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SYSTEMROOT",
+    "COMSPEC",
+    "PATHEXT",
+    "OS",
+    "NUMBER_OF_PROCESSORS",
+    "FAKE_CLAUDE_STATE", // test double's state dir; absent in production
+  ]);
+  const keepPrefix = [/^LC_/, /^XDG_/, /^PROCESSOR_/, /^ANTHROPIC_/];
+  // GIT_CEILING_DIRECTORIES stops git discovery at the cwd, so a checkout that
+  // hosts the session dir never shows up as "Is directory a git repo: Yes"
+  // with its status in the base prompt.
+  const out = { CI: "1", GIT_CEILING_DIRECTORIES: CLAUDE_CWD };
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) continue;
+    if (keepExact.has(k.toUpperCase()) || keepPrefix.some((re) => re.test(k))) out[k] = v;
+  }
   const proxy = env.HTTPS_PROXY || env.HTTP_PROXY;
   if (proxy) {
     out.HTTP_PROXY = env.HTTP_PROXY || proxy;
@@ -873,7 +916,8 @@ function classifyClaudeError(message) {
 
 /**
  * @param {{session: {mode: "new"|"resume"|"none", id?: string}, sysFile: string, model?: string,
- *          effort?: string, tools?: string, mcp?: boolean, streamInput?: boolean}} o
+ *          effort?: string, tools?: string, mcp?: boolean, streamInput?: boolean,
+ *          systemPromptFile?: string}} o
  */
 function claudeArgs(o) {
   // The prompt goes over stdin: no argv size limit, not visible in `ps`, and a
@@ -888,6 +932,7 @@ function claudeArgs(o) {
     "--append-system-prompt-file",
     o.sysFile
   );
+  if (o.systemPromptFile) args.push("--system-prompt-file", o.systemPromptFile);
   if (o.streamInput) args.push("--input-format", "stream-json");
   if (o.tools !== undefined && o.tools !== "default") args.push("--tools", o.tools);
   if (o.model) args.push("--model", o.model);
@@ -916,7 +961,7 @@ async function runClaudeTurn({ session, prompt, attachments = [], systemPrompt, 
     : prompt;
   try {
     return await spawnClaude({
-      args: claudeArgs({ session, sysFile, model, effort, tools, mcp, streamInput }),
+      args: claudeArgs({ session, sysFile, model, effort, tools, mcp, streamInput, systemPromptFile: SYSTEM_PROMPT_FILE }),
       stdin,
       sessionId: session.id || null,
       hooks,
@@ -932,7 +977,7 @@ function spawnClaude({ args, stdin, sessionId, hooks }) {
     // A .js/.mjs CLAUDE_BIN (used by the test double) is run through node.
     const viaNode = /\.m?js$/i.test(CLAUDE_BIN);
     const child = spawn(viaNode ? process.execPath : CLAUDE_BIN, viaNode ? [CLAUDE_BIN, ...args] : args, {
-      cwd: SESSION_DIR,
+      cwd: CLAUDE_CWD,
       env: claudeEnv(),
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -1652,6 +1697,10 @@ async function route(req, res) {
 
 await loadKeys();
 await loadSessionStore();
+await fs.mkdir(CLAUDE_CWD, { recursive: true }).catch((e) => log(`warn: cannot prepare claude cwd: ${e.message}`));
+if (SYSTEM_PROMPT_FILE) {
+  await fs.access(SYSTEM_PROMPT_FILE).catch(() => log(`warn: AGENTVR_SYSTEM_PROMPT_FILE not found: ${SYSTEM_PROMPT_FILE}`));
+}
 const servers = LISTEN.map(({ host, port }) => {
   const s = http.createServer(route);
   s.on("error", (e) => log(`listen ${host}:${port} failed: ${e.message}`));

@@ -42,9 +42,18 @@ async function main() {
     }));
   }
   const system = sysFile && fs.existsSync(sysFile) ? fs.readFileSync(sysFile, "utf8") : null;
+  const leaked = Object.keys(process.env).filter(
+    (k) => /^(AGENTVR_|BODY_|CLOUDCODE_|CUSTOM_|CLAUDE_|NODE_)/.test(k) || /SECRET/.test(k)
+  );
+  const envSeen = {
+    path: Boolean(process.env.PATH || process.env.Path),
+    gitCeiling: process.env.GIT_CEILING_DIRECTORIES || null,
+    fakeState: Boolean(process.env.FAKE_CLAUDE_STATE),
+    leaked,
+  };
   fs.appendFileSync(
     path.join(stateDir, "calls.jsonl"),
-    JSON.stringify({ args, prompt, system, attachments, pid: process.pid }) + "\n"
+    JSON.stringify({ args, prompt, system, attachments, pid: process.pid, env: envSeen }) + "\n"
   );
 
   let previous = "";

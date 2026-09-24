@@ -79,6 +79,9 @@ before(async () => {
       AGENTVR_HEALTH_URL: `http://127.0.0.1:${healthSrv.address().port}/healthz`,
       AGENTVR_AUTH_FAIL_DELAY_MS: "50",
       AGENTVR_HEARTBEAT_MS: "200",
+      AGENTVR_BODY_NAME: "the island PC",
+      BODY_SSH: "body-secret-marker",
+      CUSTOM_LEAK_MARKER: "x",
       CLAUDE_BIN: path.join(here, "fake-claude.mjs"),
       FAKE_CLAUDE_STATE: path.join(tmp, "state"),
     },
@@ -108,7 +111,7 @@ test("anonymous /healthz reveals nothing beyond ok", async () => {
   assert.equal(r.status, 200);
   assert.deepEqual(r.json, { ok: true, service: "agentvr-api" });
   const r2 = await api("/healthz");
-  assert.equal(r2.json.builtin_tools, "default");
+  assert.equal(r2.json.builtin_tools, "");
   assert.ok("in_flight" in r2.json);
 });
 
@@ -120,7 +123,7 @@ test("bad key is rejected, good key accepted", async () => {
   assert.equal(ok.json.data[0].id, "agentvr-claude");
 });
 
-test("first turn uses --session-id, prompt via stdin, system via file, full default tool set", async () => {
+test("first turn uses --session-id, prompt via stdin, system via file, island tool set", async () => {
   const r = await api("/v1/chat/completions", {
     method: "POST",
     headers: { "x-conversation-id": "conv-A" },
@@ -140,10 +143,16 @@ test("first turn uses --session-id, prompt via stdin, system via file, full defa
   assert.equal(c.prompt, "--help me please");
   assert.ok(!c.args.includes("--help me please"), "prompt must not be in argv");
   assert.ok(c.args.includes("--session-id"));
-  assert.ok(!c.args.includes("--tools"), "default tool set must not be restricted");
+  assert.equal(argVal(c.args, "--tools"), "", "island mode removes all built-in tools; MCP is unaffected");
   assert.equal(argVal(c.args, "--output-format"), "stream-json");
-  assert.ok(c.system.includes("reached through the mcp__komputer_use__* tools"), c.system);
-  assert.doesNotMatch(c.system, /AgentVR|brain|body/i, "the note must not narrate the plumbing");
+  assert.ok(c.system.includes("mcp__komputer_use__* tools"), c.system);
+  assert.ok(c.system.includes("system_info"), c.system);
+  assert.ok(c.system.includes("the island PC"), c.system);
+  assert.doesNotMatch(
+    c.system,
+    /AgentVR|brain|body|remote|local|machine|launcher|tunnel|plumbing/i,
+    "the note must describe exactly one computer"
+  );
   assert.match(c.system, /CLIENT-SYSTEM-RULE/);
 });
 
@@ -476,7 +485,7 @@ test("Open WebUI background tasks run on the task model without tools, MCP or se
   assert.equal(argVal(c.args, "--tools"), "");
   assert.ok(!c.args.includes("--mcp-config"));
   assert.ok(c.args.includes("--no-session-persistence"));
-  assert.doesNotMatch(c.system || "", /reached through the mcp__/);
+  assert.doesNotMatch(c.system || "", /mcp__komputer_use__/);
   assert.equal((await api("/v1/sessions/conv-task")).json.turn_count, turnsBefore);
 });
 
@@ -665,4 +674,64 @@ test("a second host:port listen address serves the same API", async () => {
   assert.equal(r.status, 200);
   const h = await api("/healthz");
   assert.equal(h.json.listen.length, 2);
+});
+
+// ------------------------------------------------------------ island (L2) mode
+
+test("the island child sees no wrapper env, keeps PATH, and gets a git ceiling", async () => {
+  await chat({ "x-conversation-id": "conv-island-env" }, { messages: [{ role: "user", content: "env check" }] });
+  const c = lastCall();
+  assert.deepEqual(c.env.leaked, [], `wrapper env leaked into the island: ${c.env.leaked}`);
+  assert.equal(c.env.path, true, "PATH must survive the allowlist");
+  assert.equal(c.env.fakeState, true, "the test seam must survive the allowlist");
+  assert.equal(c.env.gitCeiling, tmp, "git discovery must stop at the claude cwd");
+});
+
+test("AGENTVR_BUILTIN_TOOLS=default restores local tools; AGENTVR_SYSTEM_PROMPT_FILE passes through", async () => {
+  const sysFile = path.join(tmp, "custom-system.txt");
+  fs.writeFileSync(sysFile, "custom island persona");
+  const port = Number(new URL(base).port) + 2; // the main server holds port and port+1
+  const lite = spawn(process.execPath, [path.join(here, "..", "server.mjs")], {
+    env: {
+      ...process.env,
+      AGENTVR_API_PORT: String(port),
+      AGENTVR_API_HOST: "127.0.0.1",
+      AGENTVR_KEYS_FILE: path.join(tmp, "KEYS.txt"),
+      AGENTVR_SESSIONS_FILE: path.join(tmp, "sessions-escape.json"),
+      AGENTVR_SESSION_DIR: tmp,
+      AGENTVR_MCP_CONFIG: path.join(tmp, "mcp.json"),
+      AGENTVR_HEALTH_URL: `http://127.0.0.1:${healthSrv.address().port}/healthz`,
+      AGENTVR_AUTH_FAIL_DELAY_MS: "50",
+      AGENTVR_BUILTIN_TOOLS: "default",
+      AGENTVR_SYSTEM_PROMPT_FILE: sysFile,
+      CLAUDE_BIN: path.join(here, "fake-claude.mjs"),
+      FAKE_CLAUDE_STATE: path.join(tmp, "state"),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    let log = "";
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("escape server did not start: " + log)), 8000);
+      lite.stdout.on("data", (d) => {
+        log += d;
+        if (log.includes("listening on")) {
+          clearTimeout(t);
+          resolve();
+        }
+      });
+    });
+    const before = calls().length;
+    const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json", "x-conversation-id": "conv-escape" },
+      body: JSON.stringify({ messages: [{ role: "user", content: "escape check" }] }),
+    });
+    assert.equal(res.status, 200, await res.text());
+    const c = calls().slice(before).at(-1);
+    assert.ok(!c.args.includes("--tools"), "legacy default must not restrict tools");
+    assert.equal(argVal(c.args, "--system-prompt-file"), sysFile);
+  } finally {
+    lite.kill();
+  }
 });
