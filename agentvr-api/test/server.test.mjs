@@ -142,7 +142,7 @@ test("first turn uses --session-id, prompt via stdin, system via file, full defa
   assert.ok(c.args.includes("--session-id"));
   assert.ok(!c.args.includes("--tools"), "default tool set must not be restricted");
   assert.equal(argVal(c.args, "--output-format"), "stream-json");
-  assert.ok(c.system.includes("reached through the mcp__workstation__* tools"), c.system);
+  assert.ok(c.system.includes("reached through the mcp__komputer_use__* tools"), c.system);
   assert.doesNotMatch(c.system, /AgentVR|brain|body/i, "the note must not narrate the plumbing");
   assert.match(c.system, /CLIENT-SYSTEM-RULE/);
 });
@@ -204,7 +204,7 @@ test("OpenAI streaming sends incremental deltas, tool notes, usage and [DONE]", 
   assert.ok(content.startsWith("checking\n\n"), content);
   assert.ok(content.endsWith("echo:TOOL go"), content);
   assert.ok(
-    chunks.some((c) => c.choices[0].delta.reasoning_content === "\n[tool] mcp__agentvr__run_command\n")
+    chunks.some((c) => c.choices[0].delta.reasoning_content === "\n[tool] mcp__komputer_use__run_command\n")
   );
   const last = chunks.at(-1);
   assert.equal(last.choices[0].finish_reason, "stop");

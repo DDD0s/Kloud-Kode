@@ -92,7 +92,7 @@ async function main() {
   }
   if (prompt.includes("TOOL")) {
     delta("checking");
-    ev({ type: "content_block_start", index: 1, content_block: { type: "tool_use", name: "mcp__agentvr__run_command" } });
+    ev({ type: "content_block_start", index: 1, content_block: { type: "tool_use", name: "mcp__komputer_use__run_command" } });
     ev({ type: "content_block_start", index: 2, content_block: { type: "text", text: "" } });
   }
   const reply = resume ? `prev=${previous}|now=${prompt}` : `echo:${prompt}`;

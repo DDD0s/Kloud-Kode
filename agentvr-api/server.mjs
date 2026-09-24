@@ -108,7 +108,7 @@ const SSE_OPEN_MS = Number(env.AGENTVR_SSE_OPEN_MS || 25_000);
 /** How the user's computer is referred to in the default note below. */
 const BODY_NAME = env.AGENTVR_BODY_NAME || "the user's computer";
 /** MCP server name in .mcp.json; it prefixes every tool that acts on that computer. */
-const BODY_MCP = env.AGENTVR_BODY_MCP || "workstation";
+const BODY_MCP = env.AGENTVR_BODY_MCP || "komputer_use";
 
 /**
  * Short working note appended to Claude Code's own system prompt. It only says
