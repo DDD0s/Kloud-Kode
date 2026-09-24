@@ -58,7 +58,7 @@ const HEALTH_URL = env.AGENTVR_HEALTH_URL || "http://127.0.0.1:18787/healthz";
 const KEYS_FILE = env.AGENTVR_KEYS_FILE || path.join(__dirname, "KEYS.txt");
 const MODEL_ID = env.AGENTVR_MODEL_ID || "agentvr-claude";
 /** Extra model ids advertised in /v1/models. "agentvr-<alias>" runs `claude --model <alias>`. */
-const EXTRA_MODELS = (env.AGENTVR_MODELS ?? "agentvr-opus,agentvr-sonnet,agentvr-haiku")
+const EXTRA_MODELS = (env.AGENTVR_MODELS ?? "agentvr-opus,agentvr-sonnet,agentvr-haiku,agentvr-fable")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);

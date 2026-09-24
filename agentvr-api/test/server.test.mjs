@@ -432,10 +432,16 @@ test("model ids map to claude --model; unknown ids fall back to default; effort 
   c = lastCall();
   assert.equal(argVal(c.args, "--model"), "claude-sonnet-5");
   assert.equal(argVal(c.args, "--effort"), "low");
+  await chat(
+    { "x-conversation-id": "conv-model" },
+    { model: "agentvr-fable", messages: [{ role: "user", content: "m4" }] }
+  );
+  c = lastCall();
+  assert.equal(argVal(c.args, "--model"), "fable");
   const models = await api("/v1/models");
   assert.deepEqual(
     models.json.data.map((m) => m.id),
-    ["agentvr-claude", "agentvr-opus", "agentvr-sonnet", "agentvr-haiku"]
+    ["agentvr-claude", "agentvr-opus", "agentvr-sonnet", "agentvr-haiku", "agentvr-fable"]
   );
 });
 

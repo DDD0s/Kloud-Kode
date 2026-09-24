@@ -148,7 +148,7 @@ curl -sS localhost:18888/v1/chat/completions \
 |------|--------|
 | 接口地址 | `http://<大脑的 Tailscale IP>:18888/v1` |
 | API Key | `KEYS.txt` 里那串 |
-| 模型 | `agentvr-claude`，或 `agentvr-opus` / `agentvr-sonnet` / `agentvr-haiku` |
+| 模型 | `agentvr-claude`，或 `agentvr-opus` / `agentvr-sonnet` / `agentvr-haiku` / `agentvr-fable` |
 
 Claude 原生格式的客户端地址不带 `/v1`。
 

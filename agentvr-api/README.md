@@ -44,9 +44,9 @@ OpenAI-compatible **client-facing** Kloud Kode API front for AgentVR.
 | 客户端里选的 model | 实际运行 |
 |------|------|
 | `agentvr-claude` | Claude Code 默认模型（可用 `AGENTVR_CLAUDE_MODEL` 改） |
-| `agentvr-opus` / `agentvr-sonnet` / `agentvr-haiku` | `claude --model opus / sonnet / haiku` |
+| `agentvr-opus` / `agentvr-sonnet` / `agentvr-haiku` / `agentvr-fable` | `claude --model opus / sonnet / haiku / fable` |
 | `agentvr-<任意别名或全名>` | `claude --model <别名或全名>` |
-| `claude-…` 全名，或 `opus` / `sonnet` / `haiku` | 原样传给 `--model` |
+| `claude-…` 全名，或 `opus` / `sonnet` / `haiku` / `fable` | 原样传给 `--model` |
 | 其他（客户端默认的 `gpt-4o` 之类） | 当作默认模型 |
 
 推理强度：OpenAI 的 `reasoning_effort`（`low` / `medium` / `high`，`minimal` 当 `low`），或 `effort`，
@@ -286,7 +286,7 @@ endpoints:
 | `AGENTVR_API_HOST` | `127.0.0.1` | 监听地址，可逗号分隔多个 |
 | `AGENTVR_MAX_SESSIONS` | `0`（不限） | 同时 live 映射上限；映射本身不占资源，所以默认不限 |
 | `AGENTVR_MAX_IN_FLIGHT` | `4` | 同时在跑的 Claude 回合上限，超出的排队 |
-| `AGENTVR_MODELS` | `agentvr-opus,agentvr-sonnet,agentvr-haiku` | `/v1/models` 里额外列出的模型 |
+| `AGENTVR_MODELS` | `agentvr-opus,agentvr-sonnet,agentvr-haiku,agentvr-fable` | `/v1/models` 里额外列出的模型 |
 | `AGENTVR_CLAUDE_MODEL` | 空 | `agentvr-claude` 对应的模型，空 = Claude Code 默认 |
 | `AGENTVR_EFFORT` | 空 | 客户端没指定时的默认推理强度 |
 | `AGENTVR_NO_KEY_MODE` | `stateless` | 没有对话 id 时：`stateless` 或 `auto-session` |
