@@ -105,22 +105,21 @@ const TURN_CACHE_MS = Number(env.AGENTVR_TURN_CACHE_MS || 10 * 60_000);
  */
 const SSE_OPEN_MS = Number(env.AGENTVR_SSE_OPEN_MS || 25_000);
 
-/** How the workstation is described to Claude; set it to your machine's name. */
-const BODY_NAME = env.AGENTVR_BODY_NAME || "the workstation";
-/** MCP server name in .mcp.json, which prefixes every body tool. */
-const BODY_MCP = env.AGENTVR_BODY_MCP || "agentvr";
+/** How the user's computer is referred to in the default note below. */
+const BODY_NAME = env.AGENTVR_BODY_NAME || "the user's computer";
+/** MCP server name in .mcp.json; it prefixes every tool that acts on that computer. */
+const BODY_MCP = env.AGENTVR_BODY_MCP || "workstation";
 
-const BODY_SYSTEM = `You are operating through AgentVR Cloud API.
-
-The actual workstation is ${BODY_NAME}, exposed ONLY through
-mcp__${BODY_MCP}__* tools. This host is the brain only.
-
-Rules:
-- All filesystem, shell, desktop, process, and device actions MUST use mcp__${BODY_MCP}__* tools.
-- Do NOT use host-local Bash/Read/Write/Edit/Glob/Grep for workstation work.
-- Prefer mcp__${BODY_MCP}__run_command for shell on the body (required args: command, cwd, timeoutMs).
-- When asked to prove a command ran, execute it via body tools and report stdout/stderr briefly.
-- Reply with the final assistant answer only; keep tool chatter out of the user-facing reply.`;
+/**
+ * Short working note appended to Claude Code's own system prompt. It only says
+ * where the user's files and shell are, because that is not the machine Claude
+ * Code runs on. It says nothing about how requests reach Claude: that plumbing
+ * is irrelevant to the work, and narrating it just clutters the answers.
+ *
+ * AGENTVR_SYSTEM_PROMPT replaces it; set it to an empty string for no note at all.
+ */
+const DEFAULT_WORK_NOTE = `The user's files, shell, processes and applications are on ${BODY_NAME}, reached through the mcp__${BODY_MCP}__* tools. The machine you run on does not hold the user's work, so use those tools rather than local Read, Write, Edit, Bash, Glob or Grep for it. Prefer mcp__${BODY_MCP}__run_command for shell commands.`;
+const BODY_SYSTEM = env.AGENTVR_SYSTEM_PROMPT ?? DEFAULT_WORK_NOTE;
 
 const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
 

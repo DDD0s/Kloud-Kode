@@ -142,7 +142,8 @@ test("first turn uses --session-id, prompt via stdin, system via file, full defa
   assert.ok(c.args.includes("--session-id"));
   assert.ok(!c.args.includes("--tools"), "default tool set must not be restricted");
   assert.equal(argVal(c.args, "--output-format"), "stream-json");
-  assert.match(c.system, /the workstation, exposed ONLY through/);
+  assert.ok(c.system.includes("reached through the mcp__workstation__* tools"), c.system);
+  assert.doesNotMatch(c.system, /AgentVR|brain|body/i, "the note must not narrate the plumbing");
   assert.match(c.system, /CLIENT-SYSTEM-RULE/);
 });
 
@@ -475,7 +476,7 @@ test("Open WebUI background tasks run on the task model without tools, MCP or se
   assert.equal(argVal(c.args, "--tools"), "");
   assert.ok(!c.args.includes("--mcp-config"));
   assert.ok(c.args.includes("--no-session-persistence"));
-  assert.doesNotMatch(c.system || "", /exposed ONLY through/);
+  assert.doesNotMatch(c.system || "", /reached through the mcp__/);
   assert.equal((await api("/v1/sessions/conv-task")).json.turn_count, turnsBefore);
 });
 

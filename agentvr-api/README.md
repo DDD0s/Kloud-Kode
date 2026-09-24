@@ -341,7 +341,7 @@ curl -sS http://127.0.0.1:18888/v1/chat/completions \
 
 ## Related paths
 
-- Session cwd / MCP：`agentvr-session/`（`.mcp.json`, `CLAUDE.md`）
+- Session cwd / MCP：`agentvr-session/`（`.mcp.json`）
 - 映射登记：`agentvr-api/sessions.json`（`client_key` → `claude_session_id`）
 - Tunnel：`agentvr/tunnel-up.sh`
 - Claude：`CLAUDE_BIN`，默认在 PATH 上找

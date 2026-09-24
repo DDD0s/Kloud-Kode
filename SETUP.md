@@ -95,7 +95,7 @@ chmod 600 KEYS.txt
 把 `<token>` 换成第一步生成的那串：
 
 ```json
-{ "mcpServers": { "agentvr": { "type": "http", "url": "http://127.0.0.1:18787/mcp/<token>" } } }
+{ "mcpServers": { "workstation": { "type": "http", "url": "http://127.0.0.1:18787/mcp/<token>" } } }
 ```
 
 **3.4 配置这台机器的环境：**
