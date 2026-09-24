@@ -340,3 +340,26 @@ test("a bad argument is an error message, not a crash", async () => {
   assert.ok(r.body.error || r.body.result?.isError, "expected a structured failure");
   assert.equal((await call("read_file", { path: "missing.txt" })).isError, true);
 });
+
+test("run_command can target a specific shell, and prompting built-ins fail fast", async () => {
+  const listed = (await rpc("tools/list")).body.result.tools.find((t) => t.name === "run_command");
+  assert.ok(listed.inputSchema.properties.shell, "run_command should expose a shell parameter");
+  if (process.platform === "win32") {
+    assert.match(listed.description, /cmd\.exe/);
+    const ps = await call("run_command", { command: "Get-Date -Format yyyy", shell: "powershell" });
+    assert.equal(ps.exitCode, 0, ps.stderr);
+    assert.match(ps.stdout.trim(), /^\d{4}$/);
+    const quoted = await call("run_command", { command: '$x = "a b"; Write-Output "[$x]"', shell: "powershell" });
+    assert.equal(quoted.stdout.trim(), "[a b]");
+    const cmd = await call("run_command", { command: 'echo "hi there"', shell: "cmd" });
+    assert.match(cmd.stdout, /hi there/);
+    const prompt = await call("run_command", { command: "date", timeoutMs: 5000 });
+    assert.equal(prompt.timedOut, false, "a prompting built-in must not hang until the timeout");
+  } else {
+    const sh = await call("run_command", { command: 'x="a b"; echo "[$x]"', shell: "sh" });
+    assert.equal(sh.stdout.trim(), "[a b]");
+  }
+  const info = await call("body_info");
+  assert.ok(info.defaultShell);
+  assert.ok(info.shells.includes("powershell"));
+});

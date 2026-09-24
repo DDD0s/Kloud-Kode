@@ -26,7 +26,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { z } from "zod";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const CONFIG_PATH = process.env.CLOUDCODE_BODY_CONFIG || path.join(os.homedir(), ".cloudcode-body", "config.json");
 
 // ---------------------------------------------------------------- config
@@ -203,17 +203,38 @@ function commandEnv() {
   return env;
 }
 
-function runCommand({ command, cwd, timeoutMs, maxOutputBytes }) {
+const IS_WINDOWS = process.platform === "win32";
+/** What "default" means on this machine, in words the model can act on. */
+const DEFAULT_SHELL_NAME = IS_WINDOWS ? "cmd.exe" : path.basename(process.env.SHELL || "/bin/sh");
+const SHELLS = ["default", "cmd", "powershell", "pwsh", "bash", "sh"];
+
+/**
+ * Spawn `command` in the requested shell. "default" is the platform shell
+ * (cmd.exe on Windows). Naming a shell runs the command in it directly, which
+ * spares the model from nesting PowerShell quoting inside cmd quoting.
+ */
+function spawnShell(command, shell, options) {
+  const base = { windowsHide: true, env: commandEnv(), detached: !IS_WINDOWS, ...options };
+  switch (shell) {
+    case "powershell":
+    case "pwsh":
+      return spawn(shell === "pwsh" ? "pwsh" : "powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], base);
+    case "cmd":
+      return spawn(process.env.COMSPEC || "cmd.exe", ["/d", "/s", "/c", `"${command}"`], { ...base, windowsVerbatimArguments: true });
+    case "bash":
+    case "sh":
+      return spawn(shell, ["-c", command], base);
+    default:
+      return spawn(command, { ...base, shell: true });
+  }
+}
+
+function runCommand({ command, cwd, timeoutMs, maxOutputBytes, shell = "default" }) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      windowsHide: true,
-      env: commandEnv(),
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    // stdin is closed, so a command that stops to ask a question (cmd's bare
+    // `date`, say) gets EOF and ends instead of hanging until the timeout.
+    const child = spawnShell(command, shell, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     const out = new HeadAndTail(maxOutputBytes);
     const err = new HeadAndTail(maxOutputBytes);
     let timedOut = false;
@@ -266,17 +287,10 @@ class Processes {
     this.max = maxOutputBytes;
     this.map = new Map();
   }
-  start(command, cwd) {
+  start(command, cwd, shell = "default") {
     const id = randomUUID();
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      windowsHide: true,
-      env: commandEnv(),
-      detached: process.platform !== "win32",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const rec = { id, command, cwd, child, out: [], err: [], outLen: 0, errLen: 0, exitCode: null, signal: null, startedAt: new Date().toISOString() };
+    const child = spawnShell(command, shell, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const rec = { id, command, cwd, shell, child, out: [], err: [], outLen: 0, errLen: 0, exitCode: null, signal: null, startedAt: new Date().toISOString() };
     child.stdout.on("data", (c) => {
       rec.outLen += c.length;
       rec.out.push(c);
@@ -568,6 +582,8 @@ function buildServer(cfg, state) {
       release: os.release(),
       arch: process.arch,
       shell: process.platform === "win32" ? process.env.COMSPEC : process.env.SHELL,
+      defaultShell: DEFAULT_SHELL_NAME,
+      shells: SHELLS,
       consoleEncoding: CONSOLE_ENCODING,
       cwdRoot: { name: r.rootName, path: r.root },
       roots: Object.entries(cfg.roots).map(([name, p]) => ({ name, path: p })),
@@ -584,17 +600,23 @@ function buildServer(cfg, state) {
   if (cfg.shell) {
     tool(
       "run_command",
-      "Run a shell command on this machine and wait for it. Returns stdout and stderr separately, the exit code, and how the bytes were decoded. Use it for anything short; for a server or watcher use start_process.",
+      `Run a command on this machine (${process.platform}) and wait for it. By default it runs in ${DEFAULT_SHELL_NAME}` +
+        (IS_WINDOWS
+          ? `; for PowerShell set shell to "powershell" instead of wrapping it in cmd. cmd built-ins that prompt, like a bare \`date\` or \`time\`, get no input and fail: use \`date /t\`, or PowerShell's Get-Date.`
+          : ".") +
+        " stdin is closed. Returns stdout and stderr separately, the exit code, and how the bytes were decoded. For a server or watcher use start_process.",
       {
         command: z.string().min(1).max(32_000),
+        shell: z.enum(SHELLS).default("default").describe(`Shell to run in. "default" is ${DEFAULT_SHELL_NAME} here.`),
         cwd: z.string().default(".").describe("Working directory, relative to the root."),
         timeoutMs: z.number().int().min(100).max(600_000).optional(),
         root: R,
       },
-      async ({ command, cwd, timeoutMs, root }) => {
+      async ({ command, shell, cwd, timeoutMs, root }) => {
         const r = roots.resolve(cwd, root);
         return await runCommand({
           command,
+          shell,
           cwd: r.abs,
           timeoutMs: timeoutMs ?? cfg.defaultTimeoutMs,
           maxOutputBytes: cfg.maxOutputBytes,
@@ -606,9 +628,14 @@ function buildServer(cfg, state) {
   if (cfg.shell && cfg.processes) {
     tool(
       "start_process",
-      "Start a long-running command and leave it running. Returns a processId to read from later.",
-      { command: z.string().min(1).max(32_000), cwd: z.string().default("."), root: R },
-      async ({ command, cwd, root }) => state.processes.start(command, roots.resolve(cwd, root).abs)
+      `Start a long-running command and leave it running. Returns a processId to read from later. Runs in ${DEFAULT_SHELL_NAME} unless shell says otherwise.`,
+      {
+        command: z.string().min(1).max(32_000),
+        shell: z.enum(SHELLS).default("default"),
+        cwd: z.string().default("."),
+        root: R,
+      },
+      async ({ command, shell, cwd, root }) => state.processes.start(command, roots.resolve(cwd, root).abs, shell)
     );
     tool(
       "read_process",
