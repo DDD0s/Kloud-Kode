@@ -6,3 +6,5 @@ logs/
 *.tmp
 agentvr-api/env
 deploy/target
+agentvr/body.token
+agentvr-api/env.bak*
