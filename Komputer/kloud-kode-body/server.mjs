@@ -26,7 +26,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { z } from "zod";
 
-const VERSION = "1.2.0";
+const VERSION = "1.2.1";
 const CONFIG_PATH = process.env.KLOUD_KODE_BODY_CONFIG || path.join(os.homedir(), ".kloud-kode-body", "config.json");
 
 // ---------------------------------------------------------------- config
@@ -105,13 +105,16 @@ function detectConsoleEncoding() {
 const CONSOLE_ENCODING = detectConsoleEncoding();
 const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
 
-function decodeOutput(buf) {
+function decodeOutput(buf, fallbackEncoding = CONSOLE_ENCODING) {
   if (buf.length === 0) return { text: "", encoding: "utf-8" };
   try {
     return { text: strictUtf8.decode(buf), encoding: "utf-8" };
   } catch {
     try {
-      return { text: new TextDecoder(CONSOLE_ENCODING).decode(buf), encoding: CONSOLE_ENCODING };
+      // Once UTF-8 validation failed, retrying a permissive UTF-8 decoder would
+      // destroy bytes while still claiming UTF-8. Preserve unknown bytes instead.
+      if (fallbackEncoding === "utf-8") return { text: buf.toString("latin1"), encoding: "latin1" };
+      return { text: new TextDecoder(fallbackEncoding).decode(buf), encoding: fallbackEncoding };
     } catch {
       return { text: buf.toString("latin1"), encoding: "latin1" };
     }
@@ -290,7 +293,7 @@ class Processes {
   start(command, cwd, shell = "default") {
     const id = randomUUID();
     const child = spawnShell(command, shell, { cwd, stdio: ["pipe", "pipe", "pipe"] });
-    const rec = { id, command, cwd, shell, child, out: [], err: [], outLen: 0, errLen: 0, exitCode: null, signal: null, startedAt: new Date().toISOString() };
+    const rec = { id, command, cwd, shell, child, out: [], err: [], outLen: 0, errLen: 0, exitCode: null, signal: null, finished: false, startedAt: new Date().toISOString() };
     child.stdout.on("data", (c) => {
       rec.outLen += c.length;
       rec.out.push(c);
@@ -302,12 +305,18 @@ class Processes {
       this.#trim(rec, "err");
     });
     child.on("close", (code, sig) => {
+      rec.finished = true;
       rec.exitCode = code;
       rec.signal = sig;
       rec.endedAt = new Date().toISOString();
     });
     child.on("error", (e) => {
-      rec.err.push(Buffer.from(`\n[spawn error] ${e.message}\n`));
+      rec.finished = true;
+      rec.endedAt = new Date().toISOString();
+      const message = Buffer.from(`\n[spawn error] ${e.message}\n`);
+      rec.err.push(message);
+      rec.errLen += message.length;
+      this.#trim(rec, "err");
       rec.exitCode = rec.exitCode ?? -1;
     });
     this.map.set(id, rec);
@@ -343,7 +352,7 @@ class Processes {
     const e = slice("err", errCursor);
     return {
       processId: id,
-      running: rec.exitCode === null,
+      running: !rec.finished,
       exitCode: rec.exitCode,
       signal: rec.signal,
       stdout: o.text,
@@ -355,13 +364,13 @@ class Processes {
   }
   write(id, input) {
     const rec = this.#get(id);
-    if (rec.exitCode !== null) throw new Error("process already exited");
+    if (rec.finished) throw new Error("process already exited");
     rec.child.stdin.write(input);
     return { processId: id, wrote: input.length };
   }
   stop(id) {
     const rec = this.#get(id);
-    if (rec.exitCode !== null) return { processId: id, alreadyExited: true, exitCode: rec.exitCode };
+    if (rec.finished) return { processId: id, alreadyExited: true, exitCode: rec.exitCode, signal: rec.signal };
     try {
       if (process.platform !== "win32" && rec.child.pid) process.kill(-rec.child.pid, "SIGKILL");
       else if (rec.child.pid) spawnSync("taskkill", ["/pid", String(rec.child.pid), "/t", "/f"], { windowsHide: true });
@@ -376,8 +385,9 @@ class Processes {
         processId: r.id,
         command: r.command,
         cwd: r.cwd,
-        running: r.exitCode === null,
+        running: !r.finished,
         exitCode: r.exitCode,
+        signal: r.signal,
         startedAt: r.startedAt,
         endedAt: r.endedAt,
       })),
@@ -444,11 +454,15 @@ async function readTextFile(abs, maxBytes) {
   return { ...decodeOutput(buf), size: st.size };
 }
 
-async function readTextWindow(abs, maxBytes, offset, limit) {
+async function readTextWindow(abs, maxBytes, offset, limit, fallbackEncoding = CONSOLE_ENCODING) {
   const firstLine = offset ?? 1;
   const afterLast = limit === undefined ? Infinity : firstLine + limit;
   const scan = async (encoding, fatal = false) => {
-    const decoder = new TextDecoder(encoding, { fatal });
+    // TextDecoder's "latin1" alias is Windows-1252, not a byte-preserving
+    // Latin-1 mapping. Match the whole-file decoder's fallback exactly.
+    const decoder = encoding === "latin1"
+      ? { decode: (chunk) => chunk ? Buffer.from(chunk).toString("latin1") : "" }
+      : new TextDecoder(encoding, { fatal });
     const lines = [];
     let lineNumber = 1;
     let current = "";
@@ -495,7 +509,7 @@ async function readTextWindow(abs, maxBytes, offset, limit) {
   } catch (e) {
     if (e.code !== "ERR_ENCODING_INVALID_ENCODED_DATA") throw e;
     try {
-      return await scan(CONSOLE_ENCODING);
+      return await scan(fallbackEncoding === "utf-8" ? "latin1" : fallbackEncoding);
     } catch (fallbackError) {
       if (fallbackError.code !== "ERR_ENCODING_NOT_SUPPORTED") throw fallbackError;
       return await scan("latin1");
@@ -587,7 +601,7 @@ function buildServer(cfg, state) {
         utc: now.toISOString(),
         localDate: [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-"),
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        utcOffsetMinutes: -now.getTimezoneOffset(),
+        utcOffsetMinutes: -now.getTimezoneOffset() || 0,
       },
       shell: process.platform === "win32" ? process.env.COMSPEC : process.env.SHELL,
       defaultShell: DEFAULT_SHELL_NAME,
@@ -1066,11 +1080,11 @@ async function main() {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((e) => {
     console.error(e.message || e);
     process.exit(1);
   });
 }
 
-export { buildServer, decodeOutput, globToRegExp, HeadAndTail, Roots, Processes, loadConfig };
+export { buildServer, decodeOutput, readTextWindow, globToRegExp, HeadAndTail, Roots, Processes, loadConfig };

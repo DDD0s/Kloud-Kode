@@ -336,6 +336,9 @@ test("a started process keeps running between calls and streams with cursors", a
   assert.equal((await call("stop_process", { processId: started.processId })).stopped, true);
   await new Promise((r) => setTimeout(r, 300));
   assert.equal((await call("read_process", { processId: started.processId })).running, false);
+  assert.equal((await call("list_processes")).processes.find((p) => p.processId === started.processId).running, false);
+  assert.equal((await call("stop_process", { processId: started.processId })).alreadyExited, true);
+  assert.equal((await call("write_process", { processId: started.processId, input: "must not be written\n" })).isError, true);
 });
 
 test("system_info describes the machine and its limits, nothing about the wrapper", async () => {
@@ -346,7 +349,8 @@ test("system_info describes the machine and its limits, nothing about the wrappe
   assert.ok(Math.abs(Date.now() - Date.parse(info.time.utc)) < 5000);
   assert.match(info.time.localDate, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(info.time.timeZone, Intl.DateTimeFormat().resolvedOptions().timeZone);
-  assert.equal(info.time.utcOffsetMinutes, -new Date().getTimezoneOffset());
+  // JSON serializes negative zero as zero; preserve the sign of nonzero offsets.
+  assert.equal(info.time.utcOffsetMinutes, -new Date().getTimezoneOffset() || 0);
   assert.equal(info.defaultRoot, "main");
   assert.equal(info.roots[0].path, root);
   assert.deepEqual(info.enabled, { files: true, shell: true, processes: true });
