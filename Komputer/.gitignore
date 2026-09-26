@@ -1,0 +1,15 @@
+node_modules/
+KEYS.txt
+sessions.json
+*.pid
+logs/
+*.tmp
+komputer-api/env
+deploy/target
+komputer/body.token
+komputer-api/env.bak*
+.deploy-prev
+*.pem
+*.key
+*.p12
+*.pfx

@@ -1,3 +1,0 @@
-# Copy to deploy/target and edit. Git-ignored.
-AGENTVR_DEPLOY_HOST=box@brain
-AGENTVR_REMOTE_DIR=/home/box/agentvr-api
