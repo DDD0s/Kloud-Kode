@@ -1,100 +1,172 @@
-# 从零搭一套 Kloud Kode by Kosmolopic
+# 安装 Kloud Kode
 
-面向「公司电脑上不了外网，但想在公司用 AI 客户端干活」的场景。
-本地电脑上的 harness 通过 API 连接远端官方 Claude Code，本地执行器负责在这台电脑上操作。
-0.9.0 支持自定义工具往返；具体 harness 安装与真实 Claude 联调在后续完成。
-公网接入不强制 Tailscale，见 [公网 API 配置](docs/public-api.md)。
+这份文档按“远端 Linux 主机运行 Claude Code，本地电脑发消息和执行工具”来写。
+远端可以是云服务器，也可以是另一台自己的电脑。下面的远端命令使用 Bash。
 
-**用你自己的 Claude 账号。** 这套东西不共享订阅、不传 token，每个人装自己的一套。
+目前没有一键安装器，也没有附带聊天客户端。先把 API 配好，再接你自己的本地客户端。
+如果客户端不会执行工具，可以加装 Body，步骤在本文后半部分。
 
-## 你需要什么
+## 准备
 
-| 角色 | 是什么 | 要求 |
-|------|--------|------|
-| **大脑** | 一台能上外网、能常开的机器（云服务器、家里的小主机都行） | Linux 或 macOS，Node.js 20+，装好并登录了官方 Claude Code |
-| **身体** | 你想让 AI 操作的那台电脑（通常是家里的主力机） | Node.js 20+ |
-| **私有网络** | 让公司 / 外出的设备能找到大脑 | 推荐 [Tailscale](https://tailscale.com)，免费档够用 |
+远端需要 Git、Bash、curl、Node.js，以及已经登录的官方 Claude Code。
+代码要求 Node.js 20 以上；当前 CI 测试的是 22 和 24，首次安装可以用其中一个版本。
 
-大脑和身体可以是同一台机器，那样更简单（见最后一节）。
-
----
-
-## 第一步：身体（你家那台电脑）
-
-装好 Node.js 20 以上，然后：
+Claude Code 按 [官方安装说明](https://code.claude.com/docs/en/setup) 安装。
+用准备运行服务的普通用户执行下面两条命令，确认能启动并完成登录，不要用 root 跑服务：
 
 ```bash
-git clone <这个仓库> Kloud-Kode
-cd Kloud-Kode/Komputer/kloud-kode-body
-npm install
+claude --version
+claude
 ```
 
-生成一个 token：
+先在 CLI 里试一条普通对话。CLI 自己还不能工作时，不必继续排查 Komputer。
+如果你要用订阅登录，检查运行环境里是否留着 `ANTHROPIC_API_KEY`；它会影响 CLI 使用哪种认证方式。
+
+本地客户端需要支持 Chat Completions 或 Messages 接口。要让客户端自己执行工具，
+还需要支持 `tools` 及工具结果回传。能填 Base URL 不代表它具备这些能力。
+
+## 1. 远端：下载代码
 
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-新建配置文件。Windows 放在 `C:\Users\你的用户名\.kloud-kode-body\config.json`，
-Linux / macOS 放在 `~/.kloud-kode-body/config.json`：
-
-```json
-{
-  "port": 8787,
-  "host": "127.0.0.1",
-  "token": "刚才生成的那串",
-  "roots": { "home": "~" },
-  "defaultRoot": "home"
-}
-```
-
-`roots` 是文件工具能碰的目录，可以加几个，比如 `"code": "D:\\Github"`。
-把 token 记下来，第三步要用。
-
-启动：
-
-```bash
-node server.mjs http
-```
-
-看到 `kloud-kode-body ... on http://127.0.0.1:8787/mcp/<token>` 就成了。
-先别管开机自启，跑通全流程之后再设（见最后一节）。
-
-## 第二步：让两台机器互相能找到
-
-两台都装 Tailscale 并用同一个账号登录。装完在任意一台运行 `tailscale status`，
-应该能看到对方。
-
-**大脑要能 SSH 到身体。** 最省事的办法是在身体那台开 Tailscale SSH，或者身体是 Windows 就
-打开 OpenSSH 服务器。验证一下，在大脑上执行（把 `body` 换成身体机器的 Tailscale 名字）：
-
-```bash
-ssh body echo ok
-```
-
-能输出 `ok` 就行。
-
-## 第三步：大脑
-
-同样 clone 这个仓库，然后：
-
-```bash
+git clone https://github.com/DDD0s/Kloud-Kode.git
 cd Kloud-Kode/Komputer/komputer-api
 npm ci --ignore-scripts --no-audit --no-fund
+cp env.example env
 ```
 
-**3.1 登录 Claude Code。** 这一步必须你本人做，在大脑机器上跑 `claude`，按提示用浏览器登录。
-登录信息只存在这台机器上，这套服务从不读取它。
+下面的远端命令都在 `komputer-api` 目录执行。已有安装不要直接覆盖 `env`，升级说明见
+[命名迁移](docs/komputer-migration.md)。
 
-**3.2 准备 API key。** 这是你的客户端连过来时用的密码，和 Claude 账号无关：
+## 2. 远端：创建 API key
+
+API key 是本地客户端连接这套服务的密码，不是 Claude 登录凭据。
+下面生成随机 key，保存到仅当前用户可读写的 `KEYS.txt`；文件已经存在时会报错，不会覆盖旧 key。
 
 ```bash
-echo "api-key: $(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" > KEYS.txt
-chmod 600 KEYS.txt
+node -e "require('fs').writeFileSync('KEYS.txt', 'api-key: ' + require('crypto').randomBytes(32).toString('hex') + '\n', {flag: 'wx', mode: 0o600})"
 ```
 
-**3.3 告诉 Claude 怎么找到身体。** 编辑 `../komputer-session/.mcp.json`，
-把 `<token>` 换成第一步生成的那串：
+客户端要填的是文件中 `api-key:` 后面的字符串。不要发到 Issue 或截图里。
+
+## 3. 远端：先启动 API
+
+编辑刚才复制的 `env`，加入：
+
+```bash
+KOMPUTER_API_HOST=127.0.0.1
+KOMPUTER_API_PORT=18888
+KOMPUTER_SKIP_TUNNEL=1
+KOMPUTER_TUNNEL_UP=/bin/true
+```
+
+后两行适用于客户端自己执行工具的接法：不检查 Body，也不让启动脚本尝试建立 Body 隧道。
+以后改用 Body 时要换掉，下面有说明。
+
+`env` 会被 Bash 读取，带空格的值要加引号。远端需要出网代理才设置 `HTTPS_PROXY`，不需要就留空。
+如果 `claude` 不在服务的 PATH 中，用 `CLAUDE_BIN` 指定它的完整路径。
+
+启动并检查：
+
+```bash
+./start.sh
+KEY=$(awk -F': ' '/^api-key:/{print $2; exit}' KEYS.txt)
+curl -fsS http://127.0.0.1:18888/v1/models \
+  -H "Authorization: Bearer $KEY"
+```
+
+返回模型列表，说明服务和 key 能用。这一步还没有调用 Claude。
+再试一条不使用工具的对话；这次会产生真实模型用量：
+
+```bash
+curl -fsS http://127.0.0.1:18888/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"komputer-claude","tools":[],"tool_choice":"none","messages":[{"role":"user","content":"请只回复 OK"}]}'
+```
+
+这里显式设置 `tool_choice: none`，只测试对话。不带工具设置的普通请求会走 Body 模式，
+不能用来判断客户端工具是否接通。
+
+启动失败先看 `logs/komputer-api.log`。停止和重启：
+
+```bash
+./stop.sh
+./start.sh
+```
+
+`start.sh` 会放到后台运行，但不是开机自启或崩溃重启服务。首次搭建先手动跑通，再配置进程管理器。
+
+## 4. 让本地能连到 API
+
+上面的 `127.0.0.1` 只能在远端主机自身访问，本地客户端不能直接填它。
+
+- 走公网：准备域名和证书，按 [公网 HTTPS 配置](docs/public-api.md) 设置直连 HTTPS 或反向代理。
+  不要直接把明文 HTTP 端口开放出去。
+- 已有私网或 VPN：使用私网中实际可达的地址。确认监听地址、路由和防火墙，不要假定 VPN 会自动转发到 `127.0.0.1`。
+- 临时测试可以转发 API 端口。在本地电脑运行下面的命令，并保持这个终端打开：
+
+```bash
+ssh -N -L 18888:127.0.0.1:18888 your-user@your-server
+```
+
+最后一种情况下，本地客户端可以填 `http://127.0.0.1:18888/v1`。
+这是后台传输，发消息仍在本地客户端里，不是让你每天 SSH 上去操作 Claude。
+
+## 5. 本地：连接客户端
+
+在客户端的自定义连接里填：
+
+| 设置 | 内容 |
+| --- | --- |
+| 接口类型 | Chat Completions；或客户端支持的 Messages |
+| Base URL | 例如 `https://api.example.com:18888/v1` |
+| API key | 第二步的 key |
+| 模型 | `komputer-claude` |
+
+Messages 的完整请求地址是 `/v1/messages`。不同客户端是否自动添加 `/v1` 不一样，
+按实际请求地址检查，避免变成 `/v1/v1/messages`。
+
+启用客户端的本地工具后，先让它运行 `hostname`，再读取一个你事先准备的测试文件。
+核对工具记录和实际结果，确认操作发生在本地电脑，而不是只看模型说“完成了”。
+客户端工具请求的响应头应有 `X-Komputer-Mode: harness`。
+
+具体客户端还没有逐一联调过。工具格式、重试和取消的要求见 [客户端工具协议](docs/harness-api.md)。
+如果客户端只支持 Responses API，目前不能直接接入。
+
+## 可选：用 Body 提供本地工具
+
+仅在不使用客户端工具时做这一段。Body 在你要操作的电脑上运行，提供文件、命令和进程工具。
+一条请求里，客户端工具与 Body 不会混用。
+
+### 本地电脑
+
+按 [Body 安装步骤](kloud-kode-body/README.md) 配置并启动服务，默认监听 `127.0.0.1:8787`。
+记下 Body token。它和 API key 是两把不同的钥匙。
+
+### 远端到本地的连接
+
+Body 不要裸露到公网。内置隧道脚本要求远端能 SSH 到本地电脑，通常需要先接入私网。
+用你已有的 SSH 配置，把本地电脑设成 `body`，然后在远端检查：
+
+```bash
+ssh -o BatchMode=yes body echo ok
+```
+
+应直接输出 `ok`，不能等密码或主机指纹确认。首次连接请先手动核对主机指纹、配置密钥认证；
+不要为了省事关闭 SSH 主机验证。如果远端不能主动连回本地，这个隧道方案就不能直接用，
+可以改用前面的客户端工具接法。
+
+### 远端 MCP 配置
+
+仍在 `komputer-api` 目录，把模板复制到仓库外：
+
+```bash
+mkdir -p "$HOME/.config/komputer"
+cp ../komputer-session/.mcp.json "$HOME/.config/komputer/mcp.json"
+chmod 600 "$HOME/.config/komputer/mcp.json"
+```
+
+编辑复制后的文件，将 token 换成自己的：
 
 ```json
 {
@@ -102,122 +174,61 @@ chmod 600 KEYS.txt
     "komputer_use": {
       "type": "http",
       "url": "http://127.0.0.1:18787/mcp",
-      "headers": { "Authorization": "Bearer <token>" }
+      "headers": { "Authorization": "Bearer YOUR_BODY_TOKEN" }
     }
   }
 }
 ```
 
-旧的 `/mcp/<token>` 形式仍兼容；新配置优先把 token 放在请求头，避免它出现在 URL 日志中。
-请求头仍是敏感信息，不要把真实 `.mcp.json` 提交到仓库。
+不要在仓库里的模板中填写真实 token；模板本身是被 Git 跟踪的，`.gitignore` 不会保护它。
 
-**3.4 配置这台机器的环境：**
-
-```bash
-cp env.example env
-```
-
-编辑 `env`，一般只需要这几行（`BODY_SSH` 填身体机器在 SSH 里的名字）：
+修改 `env`：删掉前面设置的 `KOMPUTER_TUNNEL_UP=/bin/true`，把 `KOMPUTER_SKIP_TUNNEL` 改成 `0`，
+并补上另外两行：
 
 ```bash
+KOMPUTER_SKIP_TUNNEL=0
 BODY_SSH=body
-KOMPUTER_BODY_NAME="我家的 Windows 台式机"
+KOMPUTER_MCP_CONFIG="$HOME/.config/komputer/mcp.json"
 ```
 
-这个文件是被 shell 读取的，**带空格的值一定要加引号**，否则启动会报 `command not found`。
-
-如果大脑需要走代理才能访问 Anthropic，再加上 `HTTPS_PROXY=http://127.0.0.1:7890`。
-不需要就别加，填错了反而连不上。
-
-**3.5 启动：**
+重启 API。客户端不发送 `tools` 或 `tool_choice` 时，就会使用这份 Body 配置。
+也可以在远端测试：
 
 ```bash
-./start.sh
-```
-
-它会先拉起到身体的隧道，再启动 API。验证：
-
-```bash
-KEY=$(awk -F': ' '/^api-key:/{print $2; exit}' KEYS.txt)
-curl -s -H "Authorization: Bearer $KEY" localhost:18888/healthz
-```
-
-## 第四步：试一下
-
-```bash
-curl -sS localhost:18888/v1/chat/completions \
+curl -fsS http://127.0.0.1:18888/v1/chat/completions \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -H "X-Conversation-Id: test-1" \
-  -d '{"model":"komputer-claude","messages":[{"role":"user","content":"在工作站上执行 hostname，把输出告诉我"}]}'
+  -H "X-Conversation-Id: body-test" \
+  -d '{"model":"komputer-claude","messages":[{"role":"user","content":"调用 system_info，告诉我电脑名和操作系统"}]}'
 ```
 
-如果返回的是你家那台电脑的名字，整条链路就通了。
+如果前面已经启用直连 HTTPS，把这里的地址换成证书对应的 HTTPS 域名。
+返回的信息应属于本地电脑。Body 模式要保留多轮工具上下文，客户端需为每个聊天发送独立、稳定的对话 ID，
+见 [API 会话说明](komputer-api/README.md)。
 
-## 第五步：本地电脑上的 harness 或聊天界面
+API 和 Body 在同一台机器时，不需要 SSH：MCP 地址改为 `http://127.0.0.1:8787/mcp`，
+保留 `KOMPUTER_SKIP_TUNNEL=1` 和 `KOMPUTER_TUNNEL_UP=/bin/true`。
 
-在**本地电脑 B** 上你打算使用的 harness 中配置 API 连接；不要把 harness 装到远端 A，
-也不需要为了这一步再装另一套聊天软件。远端运行的是官方 Claude Code 和 Komputer API。
-对于已支持该对话接口的客户端，可按下表配置；自定义工具格式见 [harness 接口](docs/harness-api.md)。
+## 权限和数据
 
-| 项目 | 填什么 |
-|------|--------|
-| 接口地址 | 公网使用 `https://<你的API域名>:18888/v1`；私网也可使用已有地址 |
-| API Key | `KEYS.txt` 里那串 |
-| 模型 | `komputer-claude`，或 `komputer-opus` / `komputer-sonnet` / `komputer-haiku` / `komputer-fable` |
+API 当前用 `--dangerously-skip-permissions` 启动 Claude，不会把本地的 permission 设置同步到云端。
+客户端工具是否执行由本地客户端决定；Body 没有逐次审批功能，命令按运行 Body 的系统用户权限执行。
+不要因为配置了 `roots` 就认为 shell 也被隔离了。
 
-Claude 原生格式的客户端地址不带 `/v1`。
+所有 API key 都能访问同一套会话和工具，没有不同用户之间的隔离。
+不要提交 `KEYS.txt`、`env`、Body 配置、带 token 的 MCP 配置或证书私钥。
+工具结果会返回远端，必要时包括文件内容；这不是“数据永远不离开本地”的方案。
 
-**两点容易踩的坑：**
+## 常见问题
 
-- 客户端那台机器如果开着 Clash 之类的代理，要把 `100.64.0.0/10` 加进直连列表，
-  否则请求会被代理吞掉。
-- 大脑的 Tailscale 如果是用户态模式（`--tun=userspace-networking`），
-  服务监听 `127.0.0.1` 就够了，tailnet 进来的连接会自动转发过去，
-  不要把 Tailscale IP 写进监听地址，那样反而绑不上。
+| 现象 | 先检查什么 |
+| --- | --- |
+| `401` | API key 是否填错，是否误填了 Body token |
+| `502 upstream_auth_error` | 在运行服务的同一用户下启动 `claude`，检查登录 |
+| `503 body tunnel unavailable` | 请求是否误走 Body 模式；确实用 Body 时检查本地服务和 SSH |
+| `429` | 看错误类型和 `Retry-After`，不一定是 Claude 额度问题；也可能是会话上限或错误 key 尝试过多 |
+| 本地连接超时 | 先测远端 `/v1/models`，再检查监听地址、路由、防火墙和客户端代理 |
+| 只能聊天，不能操作电脑 | 客户端是否真的发送并执行工具；否则需要配置 Body |
+| 工具结果返回 `409` / `410` | 是否重复提交了不同结果，调用是否过期，服务是否重启过 |
+| 中文或日文输出乱码 | 保留原始输出，并提供 Body `system_info` 中的 `consoleEncoding` |
 
-Open WebUI、LibreChat 等配置只作为聊天界面的例子，见 `komputer-api/README.md`。
-日常从本地发指令，不要求手动 SSH；SSH 直连官方 CLI 是可选入口，后台工具隧道则是另一回事。
-
----
-
-## 开机自启
-
-**身体（Windows）：** 建一个计划任务，触发器选「登录时」，操作填
-`node`，参数 `C:\路径\kloud-kode-body\server.mjs http`，勾上「不管用户是否登录都要运行」。
-
-**身体（Linux / macOS）：** 用 systemd user unit 或 launchd。
-
-**大脑：** 把 `komputer-api/start.sh` 加进 crontab 的 `@reboot`，或写个 systemd unit。
-隧道断了会在下一次请求时自动拉起，不用单独守护。
-
-## 大脑和身体是同一台机器
-
-那就不需要 SSH 隧道了。在 `env` 里设：
-
-```bash
-KOMPUTER_SKIP_TUNNEL=1
-KOMPUTER_HEALTH_URL=http://127.0.0.1:8787/healthz
-```
-
-`.mcp.json` 直接指向 `http://127.0.0.1:8787/mcp/<token>`。
-
-## 安全
-
-拿到 API key 的人，就能通过这套服务在你的身体机器上执行命令。所以：
-
-- **公网必须 HTTPS + API Key。** 可配置 API 的 TLS 证书，或使用受保护的 HTTPS 代理，不裸露明文后端。
-- **单用户部署。** 所有 key 都代表同一所有者，不作为多租户隔离使用。
-  你朋友想用就让他照这份文档装自己的一套。
-- 不要把 `KEYS.txt`、`config.json`、`.mcp.json` 提交到仓库，`.gitignore` 已经挡了大部分。
-
-## 出问题时
-
-| 现象 | 原因 |
-|------|------|
-| `502 upstream_auth_error` | 大脑上的 Claude Code 登录过期了，去那台机器跑 `claude` 重新登录 |
-| `503 body tunnel unavailable` | 身体那台没开机，或者隧道断了。检查 `ssh body echo ok` |
-| `429` | Claude 订阅额度用完了，响应头 `Retry-After` 会说多久后再试 |
-| 客户端超时但服务端日志正常 | 多半是客户端那边的代理，见第五步的坑 |
-| 中文 / 日文输出乱码 | 身体那边会自动按控制台代码页解码。还乱就把 `system_info` 的 `consoleEncoding` 发出来 |
-
-日志在 `komputer-api/logs/komputer-api.log`。
+测试文件和临时项目比真实工作目录更适合第一次试用。

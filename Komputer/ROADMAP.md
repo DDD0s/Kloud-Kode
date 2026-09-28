@@ -1,72 +1,36 @@
-# Komputer roadmap
+# 还想改什么
 
-## 0.9.0 harness and public API
+项目的两个目标没变：操作尽量接近本地原生体验，模型尽量只接触要操作的那台电脑。
+下面是现在需要继续做的事情，不是已经排好日期的发布计划。
 
-- Client-executed function tools for Chat Completions and Messages, JSON/SSE, schema validation,
-  parallel/serial delivery, result retries, explicit cancellation and bounded in-memory state.
-- Paused parents release compute slots, so nested harness requests do not deadlock behind them.
-- Direct HTTPS, public/proxy configuration guards, strong-key checks, failed-auth limiting and opt-in CORS.
-- Locked API dependencies and Linux CI for Node 22/24, including strict HTTPS verification.
-- Local harness installation, cloud one-click installation and real deployment remain out of scope for this release.
+## 先把实际使用跑顺
 
-## 0.8.0 naming migration (local changes, not deployed)
+- 找具体的本地 harness 联调，记录版本、配置和不能用的功能。优先确认工具权限、长任务、断线重试和取消。
+- 做本地和云端安装流程，减少手动配置。现在只有安装文档和已有环境的更新脚本。
+- 完成真实公网 HTTPS、官方 Claude Code 和本地工具的整套测试。目前接口 CI 使用替身 CLI。
+- 改进进程管理。现有启动脚本使用 PID 文件，没有附带 systemd 或其他服务管理配置。
 
-- Complete application under `Komputer/`; internal paths, environment, model IDs, HTTP/JSON
-  metadata and generated log/temp names use komputer, with no previous branded aliases.
-- Neutral per-installation Claude cwd outside the checkout; new conversations request workstation
-  `system_info` before choosing commands and paths.
-- Source naming guard and runtime metadata tests; deployment paths support a repository subdirectory
-  and reject revisions from before the directory migration before resetting anything.
-- See `docs/komputer-migration.md` for one-time configuration/client changes and state handling.
-- Workstation executor renamed to `kloud-kode-body`, including its command, config directory,
-  environment variables and service metadata; official Claude Code identifiers stay unchanged.
-- Primary interaction is a local harness over the API. SSH interaction is optional.
-  Client tool support is implemented in 0.9.0; see its documented protocol subset and validation limits.
+## 本地操作还差什么
 
-Goal: a complete personal AI endpoint usable from any device (office PC, laptop on the road,
-phone), backed by the owner's own official Claude Code. Prefer full functionality over
-restrictions; keep it single-user and keep credentials inside the real `claude` binary.
+- GUI、浏览器和应用操作需要更多实际工具，也需要确认它们运行在哪个用户会话中。
+- 错误输出、编码、路径和长进程行为继续按真实电脑验证，不能只在协议上返回成功。
+- 多台本地电脑之间的选择和权限还没有设计好。切换电脑时，工具和历史不能混用。
 
-## Done in 0.7.0 (2026-09-24)
+## 隔离和恢复
 
-- Island mode (L2) by default: `--tools ""` removes all brain-local tools, so the model
-  only ever acts through the island MCP; `default` restores the legacy full set.
-- Single-computer voice everywhere the model can see: new system note, `body_info`
-  renamed to `system_info` with wrapper fields dropped, nested-MCP wording flattened.
-- Claude child gets a minimal env allowlist plus `GIT_CEILING_DIRECTORIES`; optional
-  `KOMPUTER_CLAUDE_CWD` and experimental `KOMPUTER_SYSTEM_PROMPT_FILE`.
-- Fixed `komputer-session/.claude/settings.local.json` enabling a stale server name.
+- Claude Code 的提示、用户配置、memory 和 skills 仍可能暴露云端环境，需要继续检查。
+- harness 的未完成工具状态还在内存里。研究恢复前，先明确怎么避免重复执行已经完成的操作。
+- Body 的文件根目录不限制 shell，也没有逐次审批。要增加权限控制，需要明确它与本地客户端的关系。
+- 会话映射和 Claude 转录缺少自动清理策略，不能直接按空闲时间删掉用户还需要的记录。
 
-## Done in 0.5.0 (2026-09-23)
+## 已有的基础
 
-- Brain built-in tools back to Claude Code's full default set (`KOMPUTER_BUILTIN_TOOLS=default`).
-- No cap on conversation mappings (`KOMPUTER_MAX_SESSIONS=0`); concurrency still bounded by in-flight slots.
-- Requests without a conversation id run stateless with full client history instead of
-  consuming a session (previously the 5th such request got 429).
-- Model selection (`komputer-opus/sonnet/haiku`, any `komputer-<alias>`, raw `claude-*` ids) and
-  effort (`reasoning_effort`, `effort`, Anthropic `thinking.budget_tokens`).
-- Image and PDF attachments via `--input-format stream-json` (verified against real Claude with an image).
-- Thinking streamed as `reasoning_content` / Anthropic thinking blocks.
-- Regenerate / edit / retry detection: reseeds a fresh Claude session from the client's history.
-- Open WebUI background tasks (`### Task:`) run on haiku without tools/MCP and never touch the chat.
-- `X-Komputer-Ephemeral` for explicit one-shot turns; `/v1/messages/count_tokens`; multi-address listen.
+- API 0.9.0：Chat Completions / Messages 的客户端工具调用、结果回传、SSE、重试、取消和参数校验。
+  等待本地工具时释放计算名额，允许本地子任务继续请求 API。
+- 公网接口：直连 HTTPS、反向代理后端配置、强 key 检查、错误鉴权限流和指定来源的 CORS。
+- Body 1.2.1：文件和命令工具、跨回合进程、本机 MCP 转发；输出编码回退、截断和信号终止状态有回归测试。
+- 工程统一放在 `Komputer/`，内部名称统一为 `komputer`，Claude 工作目录默认在仓库外。
+- Linux CI 覆盖 Node.js 22 和 24，包括严格证书验证的 HTTPS 测试。
 
-## Done in 0.4.0 (2026-09-23)
-
-- Real token streaming with SSE keepalive; tool progress notes; client disconnect kills `claude`.
-- Prompt over stdin, system prompt via file; constant-time auth, quiet anonymous `/healthz`,
-  SIGHUP key reload; clear 502/429 errors; first-turn uuid rotation; single-flight body probe.
-- Test suite with a fake `claude`; deploy script with backup and auto-rollback.
-
-## Next candidates
-
-1. **Access from anywhere.** Devices on the tailnet already reach the brain directly, because
-   userspace tailscaled forwards tailnet connections to loopback. Open: an extra listen port for
-   a locked-down account, and optional HTTPS via `tailscale serve`.
-2. **systemd user units** for komputer-api and the tunnel instead of pid files, with restart on
-   failure and a watchdog that re-runs `tunnel-up.sh`.
-3. **Body selection.** Several bodies (home PC, laptop) with a per-request header to choose which
-   machine the MCP tools act on.
-4. **Specific harness integration** and local/cloud one-click installers, after the API protocol release.
-5. **Usage visibility.** Surface Claude plan usage / reset time in `/healthz`.
-6. **Session housekeeping.** Prune mappings and Claude transcripts idle for N days.
+安装从 [SETUP.md](SETUP.md) 开始，旧配置迁移见 [迁移说明](docs/komputer-migration.md)。
+具体问题和方案可以在 [Issues](https://github.com/DDD0s/Kloud-Kode/issues) 讨论。

@@ -1,11 +1,21 @@
-# 云端公网 API（0.9.0）
+# 从公网连接 API
 
-“公网 API”指你自己的 **Komputer HTTPS 接口**，不是模型服务商 API Key 直连后端。
-本地 harness 填写 `KEYS.txt` 中的 Komputer key，不填写 Claude 登录凭据。
+这里配置的是你自己部署的 Komputer API。客户端用 Komputer 的 API key 连接，
+Claude Code 仍在远端使用自己的登录配置。
 
-## 直接 HTTPS
+本地 harness 自己执行工具时，只需要从本地发起 HTTPS 请求，云端不用连回本地电脑。
+使用 Body 时，云端到 Body 的 MCP 连接仍要另外配置。
 
-云端 `komputer-api/env` 配置示例（不会自动部署）：
+以下命令在远端 `Komputer/komputer-api` 目录执行。先完成 [基本安装](../SETUP.md)，
+再选择下面一种 HTTPS 接法。
+
+## API 直接提供 HTTPS
+
+先准备域名、证书和私钥。域名应指向服务器，证书应覆盖这个域名；
+服务用户需要能读取证书文件，但不要因此把私钥设成所有人可读。
+项目不会自动申请证书、修改 DNS 或开放防火墙。
+
+在 `env` 中设置，替换域名和证书路径：
 
 ```bash
 KOMPUTER_PUBLIC_API=1
@@ -16,40 +26,70 @@ KOMPUTER_TLS_KEY_FILE=/etc/komputer/tls/privkey.pem
 KOMPUTER_DEPLOY_HEALTH_URL=https://api.example.com:18888/healthz
 ```
 
-Chat Completions 基础地址示例：`https://api.example.com:18888/v1`。
-Messages 端点为 `https://api.example.com:18888/v1/messages`；按客户端是否追加 `/v1` 设置基础地址。
-证书须与域名匹配并通过客户端验证，缺失/无效则启动失败，最低 TLS 1.2。
-公网/TLS 模式拒绝少于 32 字符的 key，实际应使用密码学安全随机值。
+`KOMPUTER_DEPLOY_HEALTH_URL` 给部署脚本做健康检查用，不能代替监听和 TLS 配置。
+公网/TLS 配置要求 API key 至少 32 个字符；请使用安装步骤生成的随机 key。
+TLS 最低版本为 1.2。
 
-不强制 Tailscale。harness 工具调用和结果都由本地主动发起 HTTPS 请求，
-云端不必主动连接本地，也不需要公开本地执行器端口。原 Body 模式仍需其 MCP 通道。
+重启 API 后检查：
 
-## TLS 代理后端
+```bash
+./stop.sh
+./start.sh
+KEY=$(awk -F': ' '/^api-key:/{print $2; exit}' KEYS.txt)
+curl -fsS https://api.example.com:18888/v1/models \
+  -H "Authorization: Bearer $KEY"
+```
 
-已有 HTTPS 代理时，可保持 API 监听 `127.0.0.1`，设置 `KOMPUTER_PUBLIC_API=1`。
-容器必须监听通配 HTTP 后端时，需显式设置 `KOMPUTER_ALLOW_INSECURE_HTTP=1`，
-并保证该后端只能由受保护的 TLS 代理访问。此开关不提供加密，不能用于裸公网 HTTP。
-默认不会在公共/通配地址上静默启动明文服务。
+服务实际监听协议以 `logs/komputer-api.log` 为准；当前启动脚本的提示仍可能显示 `http://`。
+配置好云端防火墙后，再在本地电脑用自己的客户端测试同一地址。
+Chat Completions 的 Base URL 是 `https://api.example.com:18888/v1`。
+Messages 的完整端点是 `https://api.example.com:18888/v1/messages`，注意客户端是否自动追加 `/v1`。
 
-不自动获取证书、修改 DNS、防火墙、systemd 或安装代理；这些与一键安装留到后续。
-部署脚本安装锁定依赖；直接 TLS 部署要给出证书域名匹配的健康检查 URL，不会用 `curl -k`。
-等待执行中的回合超时会中止部署。
+如果证书报错，检查域名、有效期和证书链，不要通过关闭证书验证来解决。
+证书在启动时读取，续期后需要重启 API。
 
-## 访问控制
+## 已经有 HTTPS 反向代理
 
-- 原生 harness 不需要 CORS。浏览器直连可设置精确来源：
-  `KOMPUTER_CORS_ORIGINS=https://harness.example.com,http://localhost:3000`。
-  不接受通配来源，不使用 cookie 认证，预检放行不代表免除 API key。
-- 错误 key 按实际连接地址限流，默认每分钟 20 次，`X-Forwarded-For` 不能绕过；正确 key 不会被错误尝试锁死。
-- `KOMPUTER_AUTH_FAILURE_LIMIT` 调整阈值，`KOMPUTER_MAX_CONNECTIONS` 默认 512。
-  TLS 握手/HTTP 头超时 15 秒，请求体接收超时 30 秒；回复流另有回合超时和心跳。
-- 代理后的地址是代理本身，不盲目信任转发头。更细的入口限流由现有代理配置。
-- 匿名 health 只返回基础存活信息。模型、会话、工具运行及调用接口均需 key。
-- 单用户部署，所有 key 代表同一所有者，不提供多租户隔离。
+如果代理和 API 在同一台主机上，API 可以保持：
 
-## 验证边界
+```bash
+KOMPUTER_PUBLIC_API=1
+KOMPUTER_API_HOST=127.0.0.1
+KOMPUTER_API_PORT=18888
+```
 
-测试覆盖严格证书验证的 HTTPS 鉴权及工具往返、CORS、弱 key、限流和异常请求。
-开发电脑的 Avast HTTPS 扫描替换临时测试证书，导致证书固定测试失败；没有关闭校验或修改系统信任。
-GitHub Linux CI 在 Node 22/24 上执行同一完整测试，以 CI 结果为准。
-真实公网域名、实际 Claude 登录与具体 harness 尚未部署联调。
+这时不设置 API 自身的 `KOMPUTER_TLS_CERT_FILE` 和 `KOMPUTER_TLS_KEY_FILE`。
+由代理接收 HTTPS，并转发到 `http://127.0.0.1:18888`。客户端填代理的 HTTPS 地址，
+不要填后端的 HTTP 地址。代理需要保留鉴权头，并允许 SSE 流式回复和较长的请求时间。
+
+容器等环境可能需要 API 监听 `0.0.0.0`。如果后端确实只对受保护的代理可达，
+可以显式设置 `KOMPUTER_ALLOW_INSECURE_HTTP=1` 允许明文后端。
+这个开关不会加密流量，也不能用来把 HTTP 直接暴露到公网。
+
+不要同时照抄两种配置。是否由 API 还是代理处理 TLS，要先选清楚。
+
+## 浏览器与限流
+
+原生客户端不需要 CORS 设置。浏览器页面直接请求 API 时，需要列出页面的准确来源：
+
+```bash
+KOMPUTER_CORS_ORIGINS=https://harness.example.com,http://localhost:3000
+```
+
+不支持 `*`，来源不带路径或结尾斜杠。CORS 放行后仍需要 API key，不使用 cookie 登录。
+不要把 key 放进对公众开放的网页或前端代码。
+
+错误 key 默认按实际连接地址限流，每分钟允许 20 次失败；可用 `KOMPUTER_AUTH_FAILURE_LIMIT` 调整。
+服务不会信任 `X-Forwarded-For` 来绕过这一限制，代理后看到的地址可能都是代理本身。
+正确 key 不会被错误尝试锁死。更细的用户/IP 限流需要在入口代理处理。
+
+所有 key 都代表同一个部署所有者，没有不同用户之间的权限隔离。
+匿名 `/healthz` 只说明进程还在响应，不能证明 Claude 登录和本地工具都正常。
+
+## 目前验证过什么
+
+自动测试覆盖 HTTPS 证书验证、鉴权、工具往返、CORS、弱 key 和限流。
+Linux CI 在 Node.js 22 和 24 上执行这些测试；真实公网域名、真实 Claude 和具体客户端仍需要部署后联调。
+
+如果本机安全软件拦截 HTTPS 并替换测试证书，严格证书测试会失败。
+应检查证书实际签发者和网络路径，不要修改测试去接受错误证书。

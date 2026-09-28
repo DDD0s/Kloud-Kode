@@ -1,53 +1,65 @@
 # Kloud Kode Body
 
-1.2.1 修复 Linux/UTF-8 环境的回退标记与信号终止状态：无法按 UTF-8 解码、且没有其他控制台编码时，
-使用可逆 Latin-1 字节映射并明确标记，不把替换字符假报为有效 UTF-8。被信号终止的进程不再显示运行中，
-再次停止或写入已结束进程也会被正确处理。
+Body 跑在你想操作的电脑上，提供文件、命令、进程和本机 MCP 工具。
+远端 Claude Code 通过它操作这台电脑。
 
-跑在**你想操作的那台电脑**上的 MCP 服务。远端的 Claude Code（大脑）通过它在这台机器上
-执行命令、读写文件、维持长时间运行的进程。
-
-## 为什么自己写
-
-原先用的是 `@daodao97/localmcp`。它是给 ChatGPT 做的桥：ChatGPT 没有文件工具，所以它要
-提供一整套去补。我们的大脑是 Claude Code，本来就有自己的工具循环，重复的部分是白带的，
-它捆的 Cloudflare Worker 中继、skills 系统也用不上。自己写之后少了一层不可控的依赖，
-也顺手修掉了几个对我们影响很直接的问题：
-
-| 问题 | 这里的做法 |
-|------|-----------|
-| 命令输出一律按 UTF-8 解码，日文（cp932）/ 中文（gbk）系统上原生命令输出乱码 | 先按 UTF-8 严格解码，失败再用实际控制台代码页，并在结果里写明用了哪种 |
-| stdout 和 stderr 混在一起，分不清哪句是报错 | 分开返回，另给 `exitCode` 和 `durationMs` |
-| 只保留前 256KB，构建日志的结尾（最关键的部分）被丢掉 | 同时保留开头和结尾，中间省略并注明丢了多少字节 |
-| 只传 6 个环境变量，Windows 下 `PATHEXT`、`APPDATA`、`TEMP` 丢失，`npm` 这类 `.cmd` 命令找不到 | 完整传递环境，只摘掉本服务自己的密钥 |
+如果本地 harness 已经负责执行工具，就不需要额外安装 Body。
+整套服务的配置顺序见 [安装步骤](../SETUP.md)。
 
 ## 安装
 
-需要 Node.js 20 以上。
+需要 Git 和 Node.js。代码要求 Node.js 20 以上，当前 CI 使用 22 和 24。
+在要操作的电脑上打开终端：
 
 ```bash
-cd kloud-kode-body
-npm install
+git clone https://github.com/DDD0s/Kloud-Kode.git
+cd Kloud-Kode/Komputer/kloud-kode-body
+npm ci --ignore-scripts --no-audit --no-fund
 ```
 
-生成一个 token，写进配置文件：
+已有代码就直接进入 `Komputer/kloud-kode-body`。上面三条命令也能在 PowerShell 中逐行执行。
+
+生成一个随机 token：
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-配置放在 `~/.kloud-kode-body/config.json`（Windows 是 `C:\Users\你\.kloud-kode-body\config.json`），
-可参考 `config.example.json`：
+配置文件默认在用户目录下。第一次安装时，复制模板：
+
+Windows PowerShell：
+
+```powershell
+New-Item -ItemType Directory -Path "$env:USERPROFILE\.kloud-kode-body" -Force
+Copy-Item config.example.json "$env:USERPROFILE\.kloud-kode-body\config.json"
+```
+
+Linux / macOS：
+
+```bash
+mkdir -p "$HOME/.kloud-kode-body"
+cp config.example.json "$HOME/.kloud-kode-body/config.json"
+chmod 600 "$HOME/.kloud-kode-body/config.json"
+```
+
+已有配置不要覆盖。编辑复制后的 `config.json`，把 `token` 换成刚才生成的值，
+把 `roots` 改成实际存在的工作目录。例如 Windows：
 
 ```json
 {
   "port": 8787,
   "host": "127.0.0.1",
-  "token": "上一步生成的那串",
-  "roots": { "home": "~", "code": "D:\\Github" },
-  "defaultRoot": "home"
+  "token": "YOUR_RANDOM_TOKEN_AT_LEAST_32_CHARS",
+  "roots": { "project": "D:\\Projects\\demo" },
+  "defaultRoot": "project",
+  "files": true,
+  "shell": true,
+  "processes": true
 }
 ```
+
+路径要换成你自己的。Linux / macOS 可以用 `/home/you/projects/demo` 这类绝对路径，或以 `~` 开头的路径。
+不要直接把占位 token 当成密码使用。
 
 启动：
 
@@ -55,59 +67,79 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 node server.mjs http
 ```
 
-用 `KLOUD_KODE_BODY_CONFIG` 指定别的配置文件，用 `KLOUD_KODE_BODY_TOKEN` 覆盖 token。
-`node server.mjs stdio` 是 stdio 模式，给本机直接挂载用。
+看到监听 `127.0.0.1:8787` 的日志后，保持进程运行。另开终端访问 `http://127.0.0.1:8787/healthz`，
+确认服务能响应。健康检查不需要 token，也不代表 MCP 鉴权已经通过。
 
-## 大脑那边怎么连
+可用 `KLOUD_KODE_BODY_CONFIG` 指定其他配置文件，`KLOUD_KODE_BODY_TOKEN` 覆盖配置里的 token。
+`node server.mjs stdio` 提供给同机 MCP 客户端使用，不启动 HTTP 端口。
 
-在大脑主机把端口转发过来（例如 Tailscale SSH），然后写进 Claude Code 的 `.mcp.json`：
+## 远端怎么连接
 
-```json
-{ "mcpServers": { "body": { "type": "http", "url": "http://127.0.0.1:18787/mcp/<token>" } } }
-```
-
-token 放在路径里，是因为有些客户端只能填一个 URL、加不了请求头。也支持
-`Authorization: Bearer <token>`，能加头就用头。
-
-## 工具
-
-| 工具 | 说明 |
-|------|------|
-| `system_info` | 这台机器是什么、开了哪些能力、根目录和各项上限 |
-| `run_command` | 跑一条命令并等它结束，分开返回 stdout / stderr / 退出码 |
-| `start_process` / `read_process` / `write_process` / `stop_process` / `list_processes` | 开发服务器、watcher 这类需要跨回合活着的进程；`read_process` 用游标续读 |
-| `read_file` / `write_file` / `edit_file` | 读写文件；`read_file` 可按行窗口读大文件；`edit_file` 要求 `oldText` 唯一匹配 |
-| `list_directory` / `find_files` / `search_files` / `stat_path` | 列目录、按名字找、按内容搜 |
-| `create_directory` / `delete_path` / `move_path` | 建目录、删除、移动 |
-| `list_mcp_servers` / `list_mcp_tools` / `call_mcp_tool` | 转发这台机器上装的其他 stdio MCP（见下） |
-
-## 挂载这台机器上的其他 MCP
-
-装在**这台电脑**上的 MCP，写进配置的 `mcpServers`，云端就能通过 `call_mcp_tool` 调用，
-不用在大脑那边再装一份：
+默认只监听本机。按 [安装步骤](../SETUP.md) 建立 SSH 隧道后，远端 MCP 地址是
+`http://127.0.0.1:18787/mcp`，配置如下：
 
 ```json
-"mcpServers": {
-  "office": { "command": "npx", "args": ["-y", "@neuraforge/office-mcp", "--pptx"] }
+{
+  "mcpServers": {
+    "komputer_use": {
+      "type": "http",
+      "url": "http://127.0.0.1:18787/mcp",
+      "headers": { "Authorization": "Bearer YOUR_BODY_TOKEN" }
+    }
+  }
 }
 ```
 
-用 `list_mcp_servers` 确认挂上了，`list_mcp_tools` 看它有哪些工具和参数，再用 `call_mcp_tool` 调用。
+这份带 token 的配置保存在仓库外，通过 `KOMPUTER_MCP_CONFIG` 告诉 API 它的位置。
+`/mcp/<token>` 地址仍可用于不支持请求头的客户端，但 token 会出现在 URL 中，不要把这类地址写进日志或截图。
 
-## 安全
+## 能做什么
 
-- **默认只监听 127.0.0.1。** 请通过 Tailscale 或 SSH 转发访问，不要直接暴露到公网。
-  拿到 token 的人等于拿到这台电脑的命令执行权限。
-- **`roots` 是防手滑，不是安全边界。** 文件工具不能跳出 `roots`，但 `run_command` 本来就能
-  跑任何命令。不想给 shell 就在配置里把 `shell` 设成 `false`。
-- token 至少 32 个字符，比较时用的是定长比较，失败会延迟一秒再回。
-- `/healthz` 不需要 token，但只回服务名和版本。
+| 工具 | 用途 |
+| --- | --- |
+| `system_info` | 电脑名、系统、shell、时间、工作目录和功能开关 |
+| `run_command` | 执行命令，分别返回 stdout、stderr 和退出码 |
+| `start_process` / `read_process` / `write_process` / `stop_process` / `list_processes` | 管理跨回合运行的进程，例如开发服务器；按游标读取新增输出 |
+| `read_file` / `write_file` / `edit_file` | 读写文件；按行读取大文件，按唯一匹配的原文编辑 |
+| `list_directory` / `find_files` / `search_files` / `stat_path` | 列目录、查找文件和内容、读取文件信息 |
+| `create_directory` / `delete_path` / `move_path` | 创建目录、删除和移动文件 |
+| `list_mcp_servers` / `list_mcp_tools` / `call_mcp_tool` | 调用这台电脑上的其他 stdio MCP 服务 |
+
+命令输出先尝试严格 UTF-8 解码，失败后尝试系统控制台编码，并报告所用编码。
+日志超过上限时保留开头和结尾，注明省略的字节数。默认输出上限为 256 KiB，文件读取上限为 8 MiB。
+
+## 连接本机的其他 MCP
+
+先在本机安装并测试好对应 MCP，再把它的启动命令加入 Body 配置的 `mcpServers`。
+下面的命令名只是占位，要替换成实际的可执行文件和参数；把这一项合并进自己的配置，不要覆盖其他设置。
+
+```json
+{
+  "mcpServers": {
+    "my_app": {
+      "command": "your-mcp-server",
+      "args": []
+    }
+  }
+}
+```
+
+通过 `list_mcp_servers` 和 `list_mcp_tools` 检查，再用 `call_mcp_tool` 调用。
+应用和 MCP 都装在要操作的电脑上，不用在远端再装一份。
+是否能操作 GUI、Office 或其他应用，取决于你接入的工具；Body 自己没有完整的桌面控制功能。
+
+## 权限
+
+Body 没有弹窗审批功能。拿到 token 并能连到端口的人，可以使用所有已开启的工具。
+命令按启动 Body 的系统用户权限运行，不会同步其他客户端的 permission 设置。
+
+`roots` 限制文件工具的路径，不限制 shell 命令。关闭 `shell` 可以关闭命令和进程工具，
+但另外接入的 MCP 仍有自己的能力和权限，需要单独检查。
+
+不要直接把 Body 端口开放到公网，也不要用管理员权限运行，除非你明确需要并接受这些权限。
+要操作桌面应用时，还要考虑登录会话；在后台服务账户下启动，并不等于能操作当前用户的桌面。
 
 ## 测试
 
-```bash
-npm test
-```
-
-会真的起一个服务进程，用 HTTP 打进去，覆盖鉴权、编码回退、输出截断、路径越界、
-进程游标读取等行为。
+在本目录执行 `npm test`。测试会启动真实 Body 进程，检查 HTTP 鉴权、路径限制、
+输出解码和截断、进程读取和终止等行为。
