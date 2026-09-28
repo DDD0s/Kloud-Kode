@@ -1,8 +1,8 @@
 # Kloud Kode
 
-by Kosmolopic
-
-给Claude Code带上vr做手艺活
+CAPTURED
+KERNEL SENSOR:
+EMURATED...
 
 ## 怎么用
 
